@@ -64,6 +64,11 @@ export function normalize(text) {
   try {
     data = JSON.parse(text);
   } catch {
+    if (/<html/i.test(text)) {
+      const title = (text.match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1] || '';
+      const body = text.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      return { ok: false, code: 'HTML', msg: `공공데이터포털이 오류 페이지를 보냈습니다: ${(title + ' ' + body).trim().slice(0, 300)}` };
+    }
     // XML 오류 응답 (인증키 오류 등은 type=json 이어도 XML로 올 수 있음)
     const pick = (tag) => (text.match(new RegExp('<' + tag + '>([^<]*)</' + tag + '>')) || [])[1];
     const code = pick('returnReasonCode') || pick('resultCode') || '';
@@ -121,18 +126,28 @@ export async function onRequestGet(context) {
     if (hit) return hit;
   }
 
-  let text;
-  try {
+  const get = async (u) => {
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 20000);
-    const r = await fetch(target, { signal: ctrl.signal, headers: { accept: 'application/json' } });
-    clearTimeout(timer);
-    text = await r.text();
+    try {
+      const r = await fetch(u, { signal: ctrl.signal, headers: { accept: 'application/json, application/xml, */*', 'user-agent': 'Mozilla/5.0 (compatible; cne-contract-helper)' } });
+      return { status: r.status, text: await r.text() };
+    } finally { clearTimeout(timer); }
+  };
+  let resp;
+  try {
+    resp = await get(target);
+    // https에서 HTML 오류 페이지가 오면 문서에 적힌 http 주소로 한 번 더 시도
+    if (/<html/i.test(resp.text)) {
+      const alt = await get(target.replace(/^https:/, 'http:')).catch(() => null);
+      if (alt && !/<html/i.test(alt.text)) resp = alt;
+    }
   } catch (e) {
     return json({ ok: false, code: 'NETWORK', msg: '나라장터 API 서버에 연결하지 못했습니다. 잠시 후 다시 시도하세요.' }, 502);
   }
 
-  const result = normalize(text);
+  const result = normalize(resp.text);
+  if (!result.ok && result.code === 'HTML') result.msg += ` (HTTP ${resp.status})`;
   if (result.ok) {
     const res = json(result, 200, { 'cache-control': 'public, max-age=600' });
     if (cache) context.waitUntil?.(cache.put(cacheKey, res.clone()));

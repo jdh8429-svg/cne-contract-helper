@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>충청남도교육청 계약 업무 도우미</title>
+<meta name="robots" content="noindex">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="#contract">충청남도교육청 계약 업무 도우미</a>
+  <form class="gsearch" id="gsearch" role="search">
+    <label class="sr" for="gq">통합 검색</label>
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#5B6472" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
+    <input id="gq" type="search" placeholder="사업명 키워드 또는 사업자등록번호 검색" autocomplete="off">
+  </form>
+</header>
+<div class="layout">
+  <nav class="side" id="nav" aria-label="주 메뉴"></nav>
+  <main class="main">
+    <div class="pagehead">
+      <h1 id="ptitle"></h1>
+      <span id="psub" class="muted"></span>
+    </div>
+    <div id="view"></div>
+  </main>
+</div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="/app.js"></script>
+</body>
+</html>

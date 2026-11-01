@@ -1153,12 +1153,12 @@
         <section class="card">
           <h2>우리 기관</h2>
           <form id="setform" style="display:flex;flex-direction:column;gap:14px" class="form">
-            <label class="grow" style="width:100%">기관명 (나라장터에 등록된 이름의 일부)<input type="text" name="insttNm" value="${esc(settings.insttNm)}" required></label>
+            <label style="width:100%">기관명 (나라장터에 등록된 이름의 일부)<input type="text" name="insttNm" value="${esc(settings.insttNm)}" required></label>
             <label style="width:100%">기관 기준<select name="insttDivCd">
               <option value="1" ${settings.insttDivCd === '1' ? 'selected' : ''}>계약기관 · 공고기관 기준 (교육청이 직접 계약·공고한 건)</option>
               <option value="2" ${settings.insttDivCd === '2' ? 'selected' : ''}>수요기관 기준 (교육청 소속 기관이 요청한 건 포함)</option>
             </select></label>
-            <fieldset style="border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin:0">
+            <fieldset style="border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin:0;align-self:stretch">
               <legend class="small" style="color:var(--sub);padding:0 4px">주로 보는 업무 (최근 계약 · 공고 현황에 사용)</legend>
               <div style="display:flex;flex-wrap:wrap;gap:14px">${Object.keys(BIZ).map((b) => `<label style="flex-direction:row;align-items:center;gap:6px;font-size:14px;color:var(--ink);min-height:32px"><input type="checkbox" name="bizs" value="${b}" ${settings.bizs.includes(b) ? 'checked' : ''}>${b}</label>`).join('')}</div>
             </fieldset>

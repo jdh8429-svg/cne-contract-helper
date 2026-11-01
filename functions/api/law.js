@@ -41,16 +41,25 @@ export async function onRequestGet(context) {
     if (hit) return hit;
   }
 
-  let text;
-  try {
+  const get = async (u, ms) => {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 20000);
-    const r = await fetch(target, { signal: ctrl.signal });
-    clearTimeout(timer);
-    text = await r.text();
-  } catch (e) {
-    return json({ ok: false, code: 'NETWORK', msg: '법제처 서버에 연결하지 못했습니다. 잠시 후 다시 시도하세요.' }, 502);
+    const timer = setTimeout(() => ctrl.abort(), ms);
+    try {
+      const r = await fetch(u, { signal: ctrl.signal, headers: { 'user-agent': 'Mozilla/5.0 (compatible; cne-contract-helper)' } });
+      return { status: r.status, text: await r.text() };
+    } finally { clearTimeout(timer); }
+  };
+  const bad = (r) => !r || r.status >= 500 || /^error code: 5\d\d/i.test(r.text.trim());
+  let resp = null;
+  try { resp = await get(target, 12000); } catch (e) { resp = null; }
+  // https 연결이 안 되거나 5xx(예: 522 연결 시간 초과)면 http 주소로 한 번 더 시도
+  if (bad(resp)) {
+    try { const alt = await get(target.replace(/^https:/, 'http:'), 12000); if (!bad(alt)) resp = alt; } catch (e) { /* 아래에서 처리 */ }
   }
+  if (bad(resp)) {
+    return json({ ok: false, code: 'NETWORK', msg: '법제처 서버가 응답하지 않습니다(연결 시간 초과). 법제처 쪽 일시 장애일 수 있으니 잠시 후 다시 시도하세요.' }, 200);
+  }
+  let text = resp.text;
   // 응답 안의 링크 등에 OC 값이 들어 있으면 지워서 브라우저에 노출되지 않게 함
   text = text.split(oc).join('');
 

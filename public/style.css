@@ -16,7 +16,11 @@ button,input,select{font-family:inherit;font-size:14px}
 .brand{color:#fff;text-decoration:none;font-size:18px;font-weight:700;letter-spacing:-.02em}
 .brand:hover{color:#fff}
 .gsearch{flex:1 1 280px;display:flex;justify-content:flex-end;align-items:center;gap:8px;background:#fff;border-radius:8px;padding:0 12px;height:40px;max-width:460px;margin-left:auto}
-.gsearch input{border:0;outline:none;flex:1;min-width:0;color:var(--ink)}
+.gsearch input{border:0;outline:none;flex:1;min-width:0;color:var(--ink);font-size:16px;background:transparent}
+.gsearch{padding-right:4px}
+.gbtn{height:32px;padding:0 14px;border:0;border-radius:6px;background:var(--navy);color:#fff;cursor:pointer;white-space:nowrap}
+.gbtn:hover{background:#0f2540}
+td .corpname{min-width:7em}
 
 .layout{display:flex;flex-wrap:wrap;align-items:flex-start;gap:20px;padding:20px 24px 48px;max-width:1440px;margin:0 auto}
 .side{flex:1 1 220px;max-width:260px;min-width:200px;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px}

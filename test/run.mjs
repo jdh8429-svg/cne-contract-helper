@@ -164,7 +164,7 @@ if (chromium) {
     await shot('2-corp-bad');
 
     await page.fill('#gq', '통합유지관리');
-    await page.press('#gq', 'Enter');
+    await page.click('.gbtn');
     await page.waitForSelector('#slist .result');
     ok(await page.locator('#slist .result').count() === 2, `[${vp.name}] 유사사업 검색 (월별 분할 결과 중복 제거)`);
     ok(await page.locator('#slist .doc').count() >= 3, `[${vp.name}] 공고문서 칩`);

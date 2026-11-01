@@ -203,7 +203,7 @@
           const corp = corps[0] ? corps[0].name + (corps.length > 1 ? ` 외 ${corps.length - 1}` : '') : '-';
           return `<tr class="${C.sel && C.sel.untyCntrctNo === c.untyCntrctNo ? 'sel' : ''}">
             <td><button type="button" class="linkbtn" data-i="${i}">${esc(c.cntrctNm)}</button></td>
-            <td>${esc(corp)}</td><td class="num">${won(c.totCntrctAmt || c.thtmCntrctAmt)}</td>
+            <td><span class="corpname" style="display:inline-block">${esc(corp)}</span></td><td class="num">${won(c.totCntrctAmt || c.thtmCntrctAmt)}</td>
             <td class="nw">${esc(dateOnly(c.cntrctCnclsDate))}</td><td>${esc(c.cntrctCnclsMthdNm || '-')}</td>
             <td class="nw">${ext(c.cntrctDtlInfoUrl || c.cntrctInfoUrl)}</td></tr>`;
         }).join('')}</tbody>
@@ -923,14 +923,17 @@
     window.scrollTo(0, 0);
   }
 
-  $('#gsearch').addEventListener('submit', (e) => {
-    e.preventDefault();
+  function globalSearch() {
     const q = $('#gq').value.trim();
     if (!q) return;
     const digits = q.replace(/[-\s]/g, '');
     location.hash = /^\d{10}$/.test(digits) ? '#corp/' + digits : '#similar/' + encodeURIComponent(q);
     $('#gq').value = '';
-  });
+    $('#gq').blur();
+  }
+  $('#gsearch').addEventListener('submit', (e) => { e.preventDefault(); globalSearch(); });
+  // 모바일 한글 입력 중 엔터가 submit으로 이어지지 않는 브라우저 대비
+  $('#gq').addEventListener('keyup', (e) => { if ((e.key === 'Enter' || e.keyCode === 13) && !e.isComposing) { e.preventDefault(); globalSearch(); } });
   window.addEventListener('hashchange', route);
   route();
 })();

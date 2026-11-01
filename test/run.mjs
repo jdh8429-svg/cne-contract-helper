@@ -42,17 +42,23 @@ function fixture(urlStr) {
   ]);
   if (op.startsWith('getBidPblancListInfo') && /^(getBidPblancListInfo)(Thng|Cnstwk|Servc|Frgcpt)$/.test(op)) return wrap([{ bidNtceNo: 'R26BK00000101', bidNtceOrd: '000', bidNtceNm: '정보시스템 통합유지관리 용역', bidNtceDt: '2026-07-20 10:00:00', bidClseDt: '2026-08-10 10:00:00', opengDt: '2026-08-11 11:00:00', presmptPrce: '830000000', asignBdgtAmt: '913000000', bidNtceDtlUrl: 'https://www.g2b.go.kr/n' }]);
   if (op === 'getBidPblancListInfoEorderAtchFileInfo') return wrap([{ eorderDocDivNm: '제안요청서', eorderAtchFileNm: '제안요청서_최종.hwpx', eorderAtchFileUrl: 'https://www.g2b.go.kr/e1' }]);
-  if (op === 'getBidPblancListInfoLicenseLimit') return wrap({ item: [{ lcnsLmtNm: '소프트웨어사업자(컴퓨터관련서비스사업)', permsnIndstrytyList: '' }] });
+  if (op === 'getBidPblancListInfoLicenseLimit') return wrap({ item: [{ lcnsLmtNm: '토목공사업/0001', permsnIndstrytyList: '' }] });
   if (op === 'getBidPblancListInfoPrtcptPsblRgn') return wrap([{ prtcptPsblRgnNm: '충청남도' }]);
   if (/BsisAmount$/.test(op)) return wrap([{ bssamt: '890000000', bssamtOpenDt: '2026-10-20 10:00', rsrvtnPrceRngBgnRate: '-2', rsrvtnPrceRngEndRate: '+2' }]);
   if (/ChgHstry/.test(op)) return wrap([{ chgDt: '2026-10-16 09:00', chgItemNm: '입찰마감일시', bfchgVal: '2026-11-05', afchgVal: '2026-11-12' }]);
   if (op === 'getPrcrmntCorpBasicInfo02') return wrap([{ bizno: '1234567890', corpNm: '가나다정보통신(주)', ceoNm: '홍길동', adrs: '충청남도 홍성군', telNo: '041-000-0000', corpBsnsDivNm: '물품,용역', opbizDt: '2001-01-01 00:00:00' }]);
-  if (op === 'getPrcrmntCorpIndstrytyInfo02') return wrap([{ indstrytyNm: '소프트웨어사업자', rprsntIndstrytyYn: 'Y', indstrytyStatsNm: '정상', vldPrdExprtDt: '2027-01-01' }]);
+  if (op === 'getPrcrmntCorpIndstrytyInfo02') return wrap([{ indstrytyNm: '소프트웨어사업자', indstrytyCd: '1468', rprsntIndstrytyYn: 'Y', indstrytyStatsNm: '정상', vldPrdExprtDt: '2027-01-01' }]);
   if (op === 'getPrcrmntCorpSplyPrdctInfo02') return wrap([{ dtilPrdctClsfcNoNm: '정보시스템유지관리서비스', dtilPrdctClsfcNo: '8111229901', rprsntPrdctClsfcNoNmYn: 'Y', mnfctYn: 'N' }]);
   if (op === 'getUnptRsttCorpInfo02') return u.searchParams.get('bizno') === '9999999999'
     ? wrap([{ bizno: '9999999999', corpNm: '하나둘건설(주)', rsttBgnDate: '2026-08-01', rsttEndDate: '2099-01-31', insttNm: '○○교육청', lawordNm: '지방계약법', lawordArtclClause: '법31조', enfcPrvNm: '계약 미이행', rsttProgrsNm: '제재' }])
     : JSON.stringify({ response: { header: { resultCode: '03', resultMsg: 'NODATA_ERROR' } } });
   if (op === 'getDminsttInfo02') return wrap([{ dminsttNm: '충청남도교육청' }]);
+  if (op === 'getIndstrytyBaseLawrgltInfoList') return wrap([
+    { indstrytyClsfcCd: '03', indstrytyClsfcNm: '법무', indstrytyCd: '1461', indstrytyNm: '법무사업(사무소)', baseLawordNm: '법무사법', baseLawordArtclClauseNm: '제14조', baseLawordUrl: 'https://www.g2b.go.kr/law', rltnRgltCntnts: '법무사법 제7조', inclsnLcns: '', indstrytyUseYn: 'Y', indstrytyRgstDt: '2006-01-12 18:43' },
+    { indstrytyClsfcCd: '41', indstrytyClsfcNm: '국토개발', indstrytyCd: '0001', indstrytyNm: '토목공사업', baseLawordNm: '건설산업기본법', baseLawordArtclClauseNm: '제9조', inclsnLcns: '[1^0001^토목공사업^0003^토목건축공사업],', indstrytyUseYn: 'Y', indstrytyRgstDt: '2006-01-12 18:43' },
+    { indstrytyClsfcCd: '41', indstrytyClsfcNm: '국토개발', indstrytyCd: '0003', indstrytyNm: '토목건축공사업', baseLawordNm: '건설산업기본법', baseLawordArtclClauseNm: '제9조', indstrytyUseYn: 'Y', indstrytyRgstDt: '2006-01-12 18:43' },
+    { indstrytyClsfcCd: '20', indstrytyClsfcNm: '정보통신', indstrytyCd: '1468', indstrytyNm: '소프트웨어사업자', baseLawordNm: '소프트웨어 진흥법', baseLawordArtclClauseNm: '제58조', indstrytyUseYn: 'Y', indstrytyRgstDt: '2010-01-01 00:00' },
+  ]);
   return wrap([]);
 }
 globalThis.fetch = async (url) => new Response(fixture(String(url)), { headers: { 'content-type': 'application/json' } });
@@ -132,7 +138,8 @@ if (chromium) {
   const shots = path.join(root, 'test', 'screens');
   fs.mkdirSync(shots, { recursive: true });
   for (const vp of [{ name: 'pc', width: 1366, height: 900 }, { name: 'phone', width: 390, height: 844 }]) {
-    const page = await browser.newPage({ viewport: { width: vp.width, height: vp.height } });
+    const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height } });
+    const page = await ctx.newPage();
     const errors = [];
     page.on('pageerror', (e) => errors.push(e.message));
     page.on('console', (m) => { if (m.type() === 'error' && !/fonts\.g/.test(m.text())) errors.push(m.text()); });
@@ -145,8 +152,16 @@ if (chromium) {
     ok((await page.textContent('.brand')).includes('충청남도교육청 계약 업무 도우미'), `[${vp.name}] 제목`);
     await page.waitForSelector('#crecent table');
     ok(await page.locator('#crecent tbody tr').count() > 0, `[${vp.name}] 우리 기관 최근 계약 표시`);
-    ok((await page.textContent('#clist button[data-i="0"]')).includes('급식기구'), `[${vp.name}] 계약 목록 최근순 정렬`);
-    await page.click('#clist button[data-i="1"]');
+    ok((await page.textContent('#clist a.linkbtn >> nth=0')).includes('급식기구'), `[${vp.name}] 계약 목록 최근순 정렬`);
+    await page.click('#clist a.linkbtn >> nth=1');
+    await page.waitForSelector('#cdetail:not([hidden])');
+    ok(/c=2026090000001/.test(page.url()), `[${vp.name}] 계약 상세가 주소에 기록됨`);
+    await page.goBack();
+    await page.waitForFunction(() => document.querySelector('#cdetail').hidden);
+    ok(/#contract/.test(page.url()) && (await page.textContent('#ptitle')) === '계약 관리', `[${vp.name}] 뒤로 가기 → 상세 닫히고 계약 관리 유지`);
+    await page.goForward();
+    await page.waitForSelector('#cdetail:not([hidden])');
+    ok(true, `[${vp.name}] 앞으로 가기 → 상세 다시 열림`);
     await page.click('#dflow');
     await page.waitForSelector('#dsub .timeline');
     ok(await page.locator('#dsub .timeline li').count() >= 4, `[${vp.name}] 공고→계약 흐름`);
@@ -158,6 +173,13 @@ if (chromium) {
     await page.click('#cdetail a[href^="#corp/"]');
     await page.waitForSelector('#kresult .banner');
     ok(await page.locator('.banner.ok').count() === 1, `[${vp.name}] 업체 확인 – 제재 없음`);
+    await page.waitForSelector('#kresult .indref a');
+    ok((await page.textContent('#kresult .indref')).includes('소프트웨어 진흥법'), `[${vp.name}] 업체 등록업종에 근거법규 표시`);
+    await page.goBack();
+    await page.waitForSelector('#cdetail:not([hidden])');
+    ok((await page.textContent('#ptitle')) === '계약 관리', `[${vp.name}] 업체 확인에서 뒤로 가기 → 계약 상세로 복귀`);
+    await page.goForward();
+    await page.waitForSelector('#kresult .banner');
     await shot('2-corp-ok');
     await page.goto(base + '/#corp/9999999999');
     await page.waitForSelector('.banner.bad');
@@ -180,8 +202,11 @@ if (chromium) {
 
     await page.click('#nav a[href="#notice"]');
     await page.waitForSelector('#nlist table');
-    await page.click('#nlist button[data-i="0"]');
-    for (const x of ['lic', 'rgn', 'bss', 'chg']) { await page.click(`#ndetail button[data-x="${x}"]`); await page.waitForSelector('#nsub .sub h3'); }
+    await page.click('#nlist a.linkbtn >> nth=0');
+    await page.click('#ndetail button[data-x="lic"]');
+    await page.waitForSelector('#nsub .indref a');
+    ok((await page.textContent('#nsub .indref')).includes('건설산업기본법'), `[${vp.name}] 면허제한에 근거법규 표시`);
+    for (const x of ['rgn', 'bss', 'chg']) { await page.click(`#ndetail button[data-x="${x}"]`); await page.waitForSelector('#nsub .sub h3'); }
     ok(true, `[${vp.name}] 공고 상세 – 면허·지역·기초금액·정정이력`);
     await page.click('#ndetail button[data-x="save"]');
     await shot('4-notice');
@@ -194,10 +219,25 @@ if (chromium) {
     ok(await page.locator('#ldetail a[href*="law.go.kr/"]').count() >= 1, `[${vp.name}] 관련법령 링크`);
     await page.click('#lsave');
     await shot('5-law');
+    await page.click('a.tab[href="#law?tab=ind"]');
+    await page.waitForSelector('#ilist table');
+    ok(await page.locator('#ilist tbody tr').count() === 4, `[${vp.name}] 업종 목록`);
+    await page.fill('#iform input[name="q"]', '토목');
+    await page.waitForFunction(() => document.querySelectorAll('#ilist tbody tr').length === 2);
+    ok(true, `[${vp.name}] 업종 실시간 필터`);
+    await page.click('#ilist a.linkbtn >> nth=0');
+    await page.waitForSelector('#idetail dl');
+    ok((await page.textContent('#idetail')).includes('토목건축공사업'), `[${vp.name}] 업종 상세 · 포함면허`);
+    await page.click('#isave');
+    await shot('5-industry');
+    await page.goBack();
+    await page.waitForFunction(() => !document.querySelector('#idetail dl'));
+    ok((await page.textContent('#ptitle')) === '법령 · 해석 찾기', `[${vp.name}] 업종 상세에서 뒤로 가기`);
 
     await page.click('#nav a[href="#saved"]');
+    await page.waitForFunction(() => document.querySelector('#ptitle').textContent === '내 보관함');
     await page.waitForSelector('#view table');
-    ok(await page.locator('#view tbody tr').count() === 2, `[${vp.name}] 보관함 저장 항목`);
+    { const savedTxt = await page.locator('#view tbody td:nth-child(2)').allTextContents(); ok(savedTxt.length === 3, `[${vp.name}] 보관함 저장 항목 ${savedTxt.length === 3 ? '' : JSON.stringify(savedTxt)}`); }
     await shot('6-saved');
 
     await page.click('#nav a[href="#settings"]');
@@ -206,14 +246,14 @@ if (chromium) {
     await page.goto(base + '/#settings/check');
     await page.waitForSelector('#health .badge');
     await page.click('#htest');
-    await page.waitForFunction(() => document.querySelectorAll('#htestres .badge').length === 4);
-    ok(await page.locator('#htestres .badge.grn').count() === 4, `[${vp.name}] 연결 테스트 4개 정상`);
+    await page.waitForFunction(() => document.querySelectorAll('#htestres .badge').length === 5);
+    ok(await page.locator('#htestres .badge.grn').count() === 5, `[${vp.name}] 연결 테스트 5개 정상`);
     await shot('7-settings');
 
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
     ok(!overflow, `[${vp.name}] 가로 넘침 없음`);
     ok(errors.length === 0, `[${vp.name}] 스크립트 오류 없음 ${errors.length ? JSON.stringify(errors) : ''}`);
-    await page.close();
+    await ctx.close();
   }
   await browser.close();
   server.close();

@@ -7,6 +7,7 @@ const BASES = {
   bid: 'https://apis.data.go.kr/1230000/ad/BidPublicInfoService',
   cntrct: 'https://apis.data.go.kr/1230000/ao/CntrctInfoService',
   usr: 'https://apis.data.go.kr/1230000/ao/UsrInfoService02',
+  ind: 'https://apis.data.go.kr/1230000/ao/IndstrytyBaseLawrgltInfoService',
 };
 
 const OPS = {
@@ -27,7 +28,11 @@ const OPS = {
     'getCntrctInfoListFrgcpt', 'getCntrctInfoListFrgcptDetail', 'getCntrctInfoListFrgcptPPSSrch', 'getCntrctInfoListFrgcptChgHstry', 'getCntrctInfoListFrgcptDltHstry',
   ],
   usr: ['getDminsttInfo02', 'getPrcrmntCorpBasicInfo02', 'getPrcrmntCorpIndstrytyInfo02', 'getPrcrmntCorpSplyPrdctInfo02', 'getUnptRsttCorpInfo02'],
+  ind: ['getIndstrytyBaseLawrgltInfoList'],
 };
+
+// 업종 목록처럼 자주 바뀌지 않는 데이터는 더 오래 캐시
+const CACHE_SECONDS = { ind: 21600 };
 
 const CODE_HINTS = {
   '03': '조회 결과가 없습니다.',
@@ -149,7 +154,7 @@ export async function onRequestGet(context) {
   const result = normalize(resp.text);
   if (!result.ok && result.code === 'HTML') result.msg += ` (HTTP ${resp.status})`;
   if (result.ok) {
-    const res = json(result, 200, { 'cache-control': 'public, max-age=600' });
+    const res = json(result, 200, { 'cache-control': `public, max-age=${CACHE_SECONDS[svc] || 600}` });
     if (cache) context.waitUntil?.(cache.put(cacheKey, res.clone()));
     return res;
   }

@@ -1,7 +1,8 @@
 'use strict';
 /* 충청남도교육청 계약 업무 도우미 - 화면 스크립트
  * 모든 외부 API 호출은 /api/g2b, /api/law (Cloudflare Pages Functions) 를 거칩니다.
- * 인증키는 서버 환경변수에만 있고 이 파일에는 없습니다. */
+ * 인증키는 서버 환경변수에만 있고 이 파일에는 없습니다.
+ * 화면 상태(메뉴·탭·선택한 상세)는 주소(#...)에 기록되어 브라우저 뒤로 가기로 돌아갈 수 있습니다. */
 (function () {
   // ---------- 공통 도구 ----------
   const $ = (s, el = document) => el.querySelector(s);
@@ -9,7 +10,7 @@
   const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const store = {
     get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
-    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) { /* 저장 불가 환경 */ } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } },
   };
   const DEFAULTS = { insttNm: '충청남도교육청', insttDivCd: '1', bizs: ['용역', '물품', '공사'] };
   let settings = Object.assign({}, DEFAULTS, store.get('cne.settings', {}));
@@ -27,6 +28,10 @@
   const won = (v) => { const n = num(v); return n ? n.toLocaleString('ko-KR') + '원' : '-'; };
   const pct = (a, b) => (num(a) && num(b) ? (num(a) / num(b) * 100).toFixed(1) + '%' : '-');
   const clean = (o) => { const r = {}; for (const k in o) if (o[k] !== '' && o[k] != null) r[k] = o[k]; return r; };
+  const byDateDesc = (...keys) => (a, b) => {
+    for (const k of keys) { const c = String(b[k] || '').localeCompare(String(a[k] || '')); if (c) return c; }
+    return 0;
+  };
 
   // 조회기간을 최대 1개월 단위로 나눔 (나라장터 일부 API 제한)
   function monthChunks(fromIso, toIso) {
@@ -51,32 +56,33 @@
     try { j = await r.json(); } catch (e) { throw new Error('서버 응답을 읽지 못했습니다. (' + r.status + ')'); }
     if (!j.ok) {
       if (j.code === '03') return { ok: true, items: [], totalCount: 0 };
-      throw new Error(j.msg || '조회 중 오류가 발생했습니다.');
+      const err = new Error(j.msg || '조회 중 오류가 발생했습니다.');
+      err.code = j.code;
+      throw err;
     }
     return j;
   }
   // 여러 페이지를 모두 받아오기 (정렬을 위해). max건까지만.
   async function g2bAll(svc, op, params, opts) {
-    const per = (opts && opts.per) || 500;
+    let per = (opts && opts.per) || 500;
     const max = (opts && opts.max) || 2000;
     const items = [];
     let total = 0;
-    for (let page = 1; page <= 20; page++) {
-      const r = await g2b(svc, op, Object.assign({}, params, { numOfRows: per, pageNo: page }));
+    for (let page = 1; page <= 30; page++) {
+      let r;
+      try {
+        r = await g2b(svc, op, Object.assign({}, params, { numOfRows: per, pageNo: page }));
+      } catch (e) {
+        // 한 번에 받을 수 있는 건수를 넘었다면 100건씩으로 다시 시도
+        if (e.code === '07' && per > 100 && page === 1) { per = 100; page = 0; continue; }
+        throw e;
+      }
       total = r.totalCount || total;
       items.push(...r.items);
       if (!r.items.length || items.length >= total || items.length >= max) break;
     }
     return { items: items.slice(0, max), totalCount: total, truncated: total > max };
   }
-  const byDateDesc = (...keys) => (a, b) => {
-    for (const k of keys) {
-      const c = String(b[k] || '').localeCompare(String(a[k] || ''));
-      if (c) return c;
-    }
-    return 0;
-  };
-
   async function lawApi(mode, params) {
     const qs = new URLSearchParams(Object.assign({ mode }, clean(params || {})));
     let r;
@@ -99,6 +105,46 @@
     clearTimeout(toast._t);
     toast._t = setTimeout(() => t.classList.remove('show'), 1800);
   }
+
+  // ---------- 주소(#) 기반 이동 ----------
+  // 형식: #메뉴/검색어?키=값  예) #contract?biz=용역&c=2026..., #law/수의계약?id=123, #law?tab=ind&ind=0001
+  function hashOf(id, arg, params) {
+    let h = '#' + id + (arg ? '/' + encodeURIComponent(arg) : '');
+    const q = new URLSearchParams(clean(params || {})).toString();
+    return q ? h + '?' + q : h;
+  }
+  function parseHash() {
+    const raw = location.hash.replace(/^#/, '');
+    const qi = raw.indexOf('?');
+    const path = qi >= 0 ? raw.slice(0, qi) : raw;
+    const query = qi >= 0 ? raw.slice(qi + 1) : '';
+    const [id, ...rest] = path.split('/');
+    let arg = '';
+    try { arg = decodeURIComponent(rest.join('/')); } catch (e) { arg = rest.join('/'); }
+    const params = {};
+    new URLSearchParams(query).forEach((v, k) => { params[k] = v; });
+    return { id, arg, params };
+  }
+  // 새 기록을 남기며 이동 (뒤로 가기로 돌아올 수 있음)
+  function go(id, arg, params) {
+    const h = hashOf(id, arg, params);
+    if (location.hash === h) route(); else location.hash = h;
+  }
+  // 기록을 남기지 않고 주소만 바꿈 (검색 조건 변경 등)
+  function replaceHash(id, arg, params) {
+    const h = hashOf(id, arg, params);
+    if (location.hash !== h) { history.replaceState(history.state, '', h); current.hash = h; }
+  }
+  const scrollPos = {};
+  let current = { id: null, arg: null, hash: null };
+  let scrollTick = false;
+  window.addEventListener('scroll', () => {
+    if (scrollTick) return;
+    scrollTick = true;
+    requestAnimationFrame(() => { scrollPos[location.hash] = window.scrollY; scrollTick = false; });
+  }, { passive: true });
+  const savedScroll = () => scrollPos[location.hash];
+  function revealIfNew(el) { if (el && savedScroll() == null) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
 
   // 업체목록 "[순번^업체구분^공동도급방식^업체명^대표자^국적^지분율^채권자^담당자^사업자번호],[...]"
   function parseCorpList(s) {
@@ -124,7 +170,7 @@
     if (/공고/.test(n)) return '공고문';
     return '기타';
   }
-  const KIND_CLASS = { '제안요청서': 'blue', '과업지시서': 'org', '규격서': '', '내역서': '', '공고문': '', '기타': '', '표준공고서': '', '현장설명서': '' };
+  const KIND_CLASS = { '제안요청서': 'blue', '과업지시서': 'org' };
   function noticeDocs(n) {
     const out = [];
     for (let i = 1; i <= 10; i++) {
@@ -139,6 +185,7 @@
     docs.length
       ? `<div class="docs">${docs.map((d) => `<span class="doc"><span class="badge ${KIND_CLASS[d.kind] || ''}">${esc(d.kind)}</span><span class="fn" title="${esc(d.file)}">${esc(d.file)}</span><a href="${esc(d.url)}" target="_blank" rel="noopener">받기</a></span>`).join('')}</div>`
       : '<div class="small muted" style="margin-top:10px">첨부된 공고문서가 없습니다.</div>';
+  const lawUrl = (name) => 'https://www.law.go.kr/법령/' + encodeURIComponent(String(name || '').replace(/\s+/g, ''));
 
   // ---------- 보관함 ----------
   const getSaved = () => store.get('cne.saved', []);
@@ -150,10 +197,60 @@
     toast('보관함에 저장했습니다.');
   }
 
-  // ---------- 1. 계약 관리 ----------
-  const C = { biz: '용역', from: iso(addDays(today(), -30)), to: iso(today()), mthd: '', q: '', page: 1, data: null, err: null, sel: null, recent: null, recentErr: null };
+  // ---------- 업종 · 근거법규 (공통 데이터) ----------
+  // 업종 목록은 자주 바뀌지 않으므로 한 번 받아 브라우저에 하루 동안 보관 → 호출 수 절약
+  const I = { all: null, err: null, promise: null, q: '', cls: '', want: null };
+  const IND_CACHE = 'cne.ind.v1';
+  function compactInd(x) {
+    return {
+      cd: String(x.indstrytyCd || ''), nm: x.indstrytyNm || '', cc: String(x.indstrytyClsfcCd || ''), cn: x.indstrytyClsfcNm || '',
+      law: x.baseLawordNm || '', art: x.baseLawordArtclClauseNm || '', url: x.baseLawordUrl || '', rule: x.rltnRgltCntnts || '',
+      incl: x.inclsnLcns || '', rg: x.indstrytyRgstDt || '', ch: x.indstrytyChgDt || '',
+    };
+  }
+  function ensureInd() {
+    if (I.all) return Promise.resolve(I.all);
+    if (I.promise) return I.promise;
+    const cached = store.get(IND_CACHE, null);
+    if (cached && cached.t && Date.now() - cached.t < 86400000 && Array.isArray(cached.items) && cached.items.length) {
+      I.all = cached.items;
+      return Promise.resolve(I.all);
+    }
+    I.promise = g2bAll('ind', 'getIndstrytyBaseLawrgltInfoList', { indstrytyUseYn: 'Y' }, { per: 500, max: 6000 })
+      .then((r) => {
+        I.all = r.items.map(compactInd).sort((a, b) => a.cd.localeCompare(b.cd));
+        I.err = null;
+        store.set(IND_CACHE, { t: Date.now(), items: I.all });
+        return I.all;
+      })
+      .catch((e) => { I.err = e.message; I.promise = null; throw e; });
+    return I.promise;
+  }
+  const indByCode = (cd) => (I.all || []).find((x) => x.cd === String(cd));
+  function indForName(name) {
+    const s = String(name || '');
+    const m = s.match(/(?:^|\D)(\d{4})(?:\D|$)/);
+    if (m && indByCode(m[1])) return indByCode(m[1]);
+    const nm = s.replace(/\(.*?\)|\d{4}|[\/,]/g, '').trim();
+    return (I.all || []).find((x) => x.nm === s) || (nm && (I.all || []).find((x) => x.nm.replace(/\(.*?\)/g, '').trim() === nm)) || null;
+  }
+  // "[1^0001^토목공사업^0003^토목건축공사업],[...]"
+  function parseIncl(s) {
+    return (String(s || '').match(/\[[^\]]*\]/g) || []).map((x) => {
+      const p = x.slice(1, -1).split('^');
+      return { aCd: p[1] || '', aNm: p[2] || '', bCd: p[3] || '', bNm: p[4] || '' };
+    }).filter((x) => x.aNm || x.bNm);
+  }
+  const indLink = (it) => `<a href="${esc(hashOf('law', '', { tab: 'ind', ind: it.cd }))}">${esc(it.law ? `${it.law} ${it.art}`.trim() : '근거법규 보기')}</a>`;
 
-  function renderContract(view) {
+  // =====================================================================
+  // 1. 계약 관리
+  // =====================================================================
+  const C = { biz: '용역', from: iso(addDays(today(), -30)), to: iso(today()), mthd: '', q: '', page: 1, data: null, err: null, sel: null, want: null, recent: null, recentErr: null, seq: 0, rseq: 0 };
+
+  function renderContract(view, arg, params) {
+    if (params.biz && BIZ[params.biz] && params.biz !== C.biz) { C.biz = params.biz; C.data = null; C.err = null; C.page = 1; }
+    C.want = params.c || null;
     view.innerHTML = `
       <section class="card">
         <div class="tabs" role="tablist" aria-label="업무 구분">
@@ -179,18 +276,23 @@
         </div>
         <div id="crecent"></div>
       </section>`;
-    $$('.tab', view).forEach((b) => b.addEventListener('click', () => { C.biz = b.dataset.biz; C.page = 1; C.sel = null; renderContract(view); searchContracts(); }));
+    $$('.tab', view).forEach((b) => b.addEventListener('click', () => go('contract', '', { biz: b.dataset.biz })));
     $('#cform').addEventListener('submit', (e) => {
       e.preventDefault();
       const f = e.target;
-      C.from = f.from.value; C.to = f.to.value; C.mthd = f.mthd.value; C.q = f.q.value.trim(); C.page = 1; C.sel = null;
+      C.from = f.from.value; C.to = f.to.value; C.mthd = f.mthd.value; C.q = f.q.value.trim(); C.page = 1; C.want = null;
+      replaceHash('contract', '', { biz: C.biz });
       searchContracts();
     });
     $('#crefresh').addEventListener('click', () => { C.recent = null; loadRecent(); });
-    drawContracts();
-    if (C.sel) drawDetail(C.sel);
-    if (!C.data && !C.err) searchContracts();
+    if (C.data || C.err) applyContractSel(false); else searchContracts();
     if (C.recent) drawRecent(); else loadRecent();
+  }
+  function updateContract(params) {
+    if (params.biz && params.biz !== C.biz) return false; // 업무 탭이 바뀌면 새로 그림
+    C.want = params.c || null;
+    applyContractSel(true);
+    return true;
   }
 
   async function searchContracts() {
@@ -198,15 +300,28 @@
     if (!box) return;
     box.innerHTML = loading();
     C.err = null;
+    const my = ++C.seq;
     try {
       const r = await g2bAll('cntrct', `getCntrctInfoList${BIZ[C.biz]}PPSSrch`, {
         inqryDiv: 1, inqryBgnDate: ymd(C.from), inqryEndDate: ymd(C.to),
         insttDivCd: settings.insttDivCd, insttNm: settings.insttNm, cntrctNm: C.q, cntrctMthdCd: C.mthd,
       });
+      if (my !== C.seq) return; // 더 최근 조회가 있으면 무시
       r.items.sort(byDateDesc('cntrctCnclsDate', 'cntrctDate', 'rgstDt'));
       C.data = r;
-    } catch (e) { C.data = null; C.err = e.message; }
+    } catch (e) { if (my !== C.seq) return; C.data = null; C.err = e.message; }
+    applyContractSel(false);
+  }
+
+  function applyContractSel(reveal) {
+    const items = C.data ? C.data.items : [];
+    const sel = C.want ? items.find((x) => x.untyCntrctNo === C.want) : null;
+    C.sel = sel || null;
+    if (sel) C.page = Math.floor(items.indexOf(sel) / 20) + 1;
     drawContracts();
+    const box = $('#cdetail');
+    if (!box) return;
+    if (sel) { drawDetail(sel); if (reveal) revealIfNew(box); } else { box.hidden = true; box.innerHTML = ''; }
   }
 
   function drawContracts() {
@@ -223,11 +338,11 @@
       <div class="small muted" style="margin-bottom:6px">총 ${C.data.totalCount.toLocaleString()}건 · 계약일 최근순${C.data.truncated ? ` (최근 ${all.length.toLocaleString()}건까지 표시 — 기간을 줄이면 전체를 볼 수 있습니다)` : ''}</div>
       <div class="tablewrap"><table>
         <thead><tr><th>계약명</th><th>업체</th><th class="nw">총계약금액</th><th>계약일</th><th>계약방법</th><th>바로가기</th></tr></thead>
-        <tbody>${items.map((c, i) => {
+        <tbody>${items.map((c) => {
           const corps = parseCorpList(c.corpList);
           const corp = corps[0] ? corps[0].name + (corps.length > 1 ? ` 외 ${corps.length - 1}` : '') : '-';
-          return `<tr class="${C.sel && C.sel.untyCntrctNo === c.untyCntrctNo ? 'sel' : ''}">
-            <td><button type="button" class="linkbtn" data-i="${i}">${esc(c.cntrctNm)}</button></td>
+          return `<tr class="${C.sel === c ? 'sel' : ''}">
+            <td><a class="linkbtn" href="${esc(hashOf('contract', '', { biz: C.biz, c: c.untyCntrctNo }))}">${esc(c.cntrctNm)}</a></td>
             <td><span class="corpname" style="display:inline-block">${esc(corp)}</span></td><td class="num">${won(c.totCntrctAmt || c.thtmCntrctAmt)}</td>
             <td class="nw">${esc(dateOnly(c.cntrctCnclsDate))}</td><td>${esc(c.cntrctCnclsMthdNm || '-')}</td>
             <td class="nw">${ext(c.cntrctDtlInfoUrl || c.cntrctInfoUrl)}</td></tr>`;
@@ -238,7 +353,6 @@
         <span class="small muted">${C.page} / ${pages}</span>
         <button type="button" class="btn sm" id="cnext" ${C.page >= pages ? 'disabled' : ''}>다음</button>
       </div>`;
-    $$('button[data-i]', box).forEach((b) => b.addEventListener('click', () => { C.sel = items[Number(b.dataset.i)]; drawContracts(); drawDetail(C.sel); $('#cdetail').scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
     $('#cprev').addEventListener('click', () => { C.page--; drawContracts(); $('#clist').scrollIntoView({ block: 'start' }); });
     $('#cnext').addEventListener('click', () => { C.page++; drawContracts(); $('#clist').scrollIntoView({ block: 'start' }); });
   }
@@ -255,9 +369,9 @@
 
   function drawDetail(c) {
     const box = $('#cdetail');
-    if (!box) return;
     box.hidden = false;
     const corps = parseCorpList(c.corpList);
+    const kw = lawKeywordFor(c.cntrctCnclsMthdNm);
     box.innerHTML = `
       <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline">
         <h2>${esc(c.cntrctNm)}</h2>
@@ -281,7 +395,7 @@
       <div class="btns" style="margin-top:14px">
         <button type="button" class="btn" id="dflow">공고 → 계약 흐름 보기</button>
         <button type="button" class="btn" id="dhist">계약 변경이력</button>
-        <a class="btn" href="#law/${encodeURIComponent(lawKeywordFor(c.cntrctCnclsMthdNm))}">'${esc(lawKeywordFor(c.cntrctCnclsMthdNm))}' 관련 법령해석</a>
+        <a class="btn" href="${esc(hashOf('law', kw))}">'${esc(kw)}' 관련 법령해석</a>
         <button type="button" class="btn" id="dsave">보관함에 저장</button>
         ${c.cntrctDtlInfoUrl ? `<a class="btn" href="${esc(c.cntrctDtlInfoUrl)}" target="_blank" rel="noopener">나라장터 계약상세 ↗</a>` : ''}
       </div>
@@ -302,7 +416,7 @@
         const r = await g2b('bid', `getBidPblancListInfo${BIZ[C.biz]}`, { inqryDiv: 2, bidNtceNo: bidNo, numOfRows: 10 });
         const n = r.items.sort((a, b) => String(b.bidNtceOrd).localeCompare(String(a.bidNtceOrd)))[0];
         if (n) {
-          steps.push({ d: dt(n.bidNtceDt), t: '입찰공고', s: `${n.bidNtceNm || ''}` , link: n.bidNtceDtlUrl || n.bidNtceUrl });
+          steps.push({ d: dt(n.bidNtceDt), t: '입찰공고', s: n.bidNtceNm || '', link: n.bidNtceDtlUrl || n.bidNtceUrl });
           if (n.bidClseDt) steps.push({ d: dt(n.bidClseDt), t: '입찰마감', s: n.cntrctCnclsMthdNm || '' });
           if (n.opengDt) steps.push({ d: dt(n.opengDt), t: '개찰', s: n.sucsfbidMthdNm || '' });
           if (num(n.presmptPrce)) note = `추정가격 ${won(n.presmptPrce)} · 배정예산 ${won(n.asignBdgtAmt)} · 계약금액/배정예산 ${pct(c.totCntrctAmt, n.asignBdgtAmt)}`;
@@ -335,11 +449,13 @@
     if (!box) return;
     box.innerHTML = loading();
     C.recentErr = null;
-    const bizs = (settings.bizs && settings.bizs.length ? settings.bizs : ['용역', '물품', '공사']).slice(0, 4);
+    const my = ++C.rseq;
+    const bizs = (settings.bizs && settings.bizs.length ? settings.bizs : DEFAULTS.bizs).slice(0, 4);
     const from = iso(addDays(today(), -30)), to = iso(today());
     const res = await Promise.allSettled(bizs.map((b) => g2bAll('cntrct', `getCntrctInfoList${BIZ[b]}PPSSrch`, {
       inqryDiv: 1, inqryBgnDate: ymd(from), inqryEndDate: ymd(to), insttDivCd: settings.insttDivCd, insttNm: settings.insttNm,
     }).then((r) => r.items.map((x) => Object.assign({ _biz: b }, x)))));
+    if (my !== C.rseq) return;
     const items = [];
     const errs = [];
     res.forEach((r) => (r.status === 'fulfilled' ? items.push(...r.value) : errs.push(r.reason.message)));
@@ -355,12 +471,14 @@
     if (!C.recent.length) { box.innerHTML = empty('최근 30일 계약이 없습니다.'); return; }
     box.innerHTML = `<div class="tablewrap"><table>
       <thead><tr><th>업무</th><th>계약명</th><th>업체</th><th class="nw">총계약금액</th><th>계약일</th><th>바로가기</th></tr></thead>
-      <tbody>${C.recent.map((c) => { const p = parseCorpList(c.corpList)[0]; return `<tr><td class="nw">${esc(c._biz)}</td><td>${esc(c.cntrctNm)}</td><td>${esc(p ? p.name : '-')}</td><td class="num">${won(c.totCntrctAmt || c.thtmCntrctAmt)}</td><td class="nw">${esc(dateOnly(c.cntrctCnclsDate))}</td><td class="nw">${ext(c.cntrctDtlInfoUrl || c.cntrctInfoUrl)}</td></tr>`; }).join('')}</tbody>
+      <tbody>${C.recent.map((c) => { const p = parseCorpList(c.corpList)[0]; return `<tr><td class="nw">${esc(c._biz)}</td><td>${esc(c.cntrctNm)}</td><td><span class="corpname" style="display:inline-block">${esc(p ? p.name : '-')}</span></td><td class="num">${won(c.totCntrctAmt || c.thtmCntrctAmt)}</td><td class="nw">${esc(dateOnly(c.cntrctCnclsDate))}</td><td class="nw">${ext(c.cntrctDtlInfoUrl || c.cntrctInfoUrl)}</td></tr>`; }).join('')}</tbody>
     </table></div><p class="small muted" style="margin:8px 0 0">최근 30일 · ${esc(settings.bizs.join(', '))} 업무 기준</p>`;
   }
 
-  // ---------- 2. 업체 확인 ----------
-  const K = { bizno: '', data: null, err: null };
+  // =====================================================================
+  // 2. 업체 확인
+  // =====================================================================
+  const K = { bizno: '', data: null, err: null, seq: 0 };
 
   function renderCorp(view, arg) {
     if (arg && /^\d{10}$/.test(arg) && arg !== K.bizno) { K.bizno = arg; K.data = null; }
@@ -377,22 +495,23 @@
       e.preventDefault();
       const v = e.target.bizno.value.replace(/\D/g, '');
       if (v.length !== 10) { $('#kresult').innerHTML = errBox('사업자등록번호 10자리를 입력하세요.'); return; }
-      location.hash = '#corp/' + v;
+      if (v === K.bizno) { K.data = null; searchCorp(); } else go('corp', v);
     });
-    if (K.bizno && !K.data && !K.err) searchCorp(); else drawCorp();
+    if (K.bizno && !K.data) searchCorp(); else drawCorp();
   }
 
   async function searchCorp() {
     const box = $('#kresult');
     box.innerHTML = loading('업체 정보와 제재 이력을 확인하는 중…');
-    K.err = null;
     const b = K.bizno;
+    const my = ++K.seq;
     const [basic, ind, prd, unpt] = await Promise.allSettled([
       g2b('usr', 'getPrcrmntCorpBasicInfo02', { inqryDiv: 3, bizno: b, numOfRows: 5 }),
-      g2b('usr', 'getPrcrmntCorpIndstrytyInfo02', { inqryDiv: 1, bizno: b, numOfRows: 50 }),
-      g2b('usr', 'getPrcrmntCorpSplyPrdctInfo02', { inqryDiv: 1, bizno: b, numOfRows: 50 }),
-      g2b('usr', 'getUnptRsttCorpInfo02', { inqryDiv: 1, bizno: b, numOfRows: 50 }),
+      g2b('usr', 'getPrcrmntCorpIndstrytyInfo02', { inqryDiv: 1, bizno: b, numOfRows: 100 }),
+      g2b('usr', 'getPrcrmntCorpSplyPrdctInfo02', { inqryDiv: 1, bizno: b, numOfRows: 100 }),
+      g2b('usr', 'getUnptRsttCorpInfo02', { inqryDiv: 1, bizno: b, numOfRows: 100 }),
     ]);
+    if (my !== K.seq) return;
     const pick = (r) => (r.status === 'fulfilled' ? { items: r.value.items } : { err: r.reason.message });
     K.data = { basic: pick(basic), ind: pick(ind), prd: pick(prd), unpt: pick(unpt) };
     drawCorp();
@@ -415,6 +534,7 @@
     else banner = `<div class="banner ok"><strong>부정당제재 이력 없음</strong><span>조회일(${esc(td)}) 기준 나라장터에 등록된 제재 이력이 없습니다. (나라장터 미등록업체·개인 제재는 제공되지 않음)</span></div>`;
 
     const name = info ? info.corpNm : (sanctions[0] && sanctions[0].corpNm) || '';
+    const inds = d.ind.items || [];
     box.innerHTML = `${banner}
       <div class="row">
         <section class="card">
@@ -442,9 +562,9 @@
       <div class="row">
         <section class="card">
           <h2>등록업종</h2>
-          ${d.ind.err ? errBox(d.ind.err) : (d.ind.items || []).length ? `<div class="tablewrap"><table>
-            <thead><tr><th>업종명</th><th>대표</th><th>상태</th><th>유효기간</th></tr></thead>
-            <tbody>${d.ind.items.map((x) => `<tr><td>${esc(x.indstrytyNm)}</td><td class="nw">${x.rprsntIndstrytyYn === 'Y' ? '<span class="badge blue">대표</span>' : ''}</td><td>${esc(x.indstrytyStatsNm || '-')}</td><td class="nw">${esc(dateOnly(x.vldPrdExprtDt) || '-')}</td></tr>`).join('')}</tbody>
+          ${d.ind.err ? errBox(d.ind.err) : inds.length ? `<div class="tablewrap"><table>
+            <thead><tr><th>업종명</th><th>대표</th><th>상태</th><th>유효기간</th><th>근거법규</th></tr></thead>
+            <tbody>${inds.map((x) => `<tr><td>${esc(x.indstrytyNm)}</td><td class="nw">${x.rprsntIndstrytyYn === 'Y' ? '<span class="badge blue">대표</span>' : ''}</td><td>${esc(x.indstrytyStatsNm || '-')}</td><td class="nw">${esc(dateOnly(x.vldPrdExprtDt) || '-')}</td><td class="indref" data-cd="${esc(x.indstrytyCd || '')}" data-nm="${esc(x.indstrytyNm || '')}"><span class="small muted">…</span></td></tr>`).join('')}</tbody>
           </table></div>` : empty('등록업종이 없습니다.')}
         </section>
         <section class="card">
@@ -457,49 +577,71 @@
       </div>`;
     const sv = $('#ksave');
     if (sv) sv.addEventListener('click', () => saveItem({ kind: '업체', key: K.bizno, name: `${name} (${K.bizno})`, link: '#corp/' + K.bizno }));
+    fillIndRefs(box);
   }
 
-  // ---------- 3. 유사사업 찾기 ----------
-  const S = { q: '', biz: '용역', months: '3', doc: '전체', items: null, err: null };
+  // 표 안의 업종 칸(.indref)에 근거법규 링크 채우기
+  function fillIndRefs(scope) {
+    const cells = $$('.indref', scope);
+    if (!cells.length) return;
+    ensureInd().then(() => {
+      cells.forEach((td) => {
+        const it = (td.dataset.cd && indByCode(td.dataset.cd)) || indForName(td.dataset.nm);
+        td.innerHTML = it ? indLink(it) : '<span class="small muted">-</span>';
+      });
+    }).catch(() => cells.forEach((td) => { td.innerHTML = '<span class="small muted">조회 실패</span>'; }));
+  }
 
-  function renderSimilar(view, arg) {
-    if (arg && arg !== S.q) { S.q = arg; S.items = null; S.err = null; }
+  // =====================================================================
+  // 3. 유사사업 찾기
+  // =====================================================================
+  const S = { q: '', ind: '', biz: '용역', months: '3', doc: '전체', items: null, err: null, seq: 0, key: '' };
+
+  function renderSimilar(view, arg, params) {
+    const ind = params.ind || '';
+    const key = arg + '|' + ind;
+    if (key !== S.key) { S.q = arg; S.ind = ind; S.key = key; S.items = null; S.err = null; }
+    const indIt = S.ind ? indByCode(S.ind) : null;
     view.innerHTML = `
       <section class="card">
         <form class="form" id="sform">
-          <label class="grow">사업명 키워드<input type="search" name="q" value="${esc(S.q)}" placeholder="예: 통합유지관리, 급식, 방수공사" required></label>
+          <label class="grow">사업명 키워드<input type="search" name="q" value="${esc(S.q)}" placeholder="예: 통합유지관리, 급식, 방수공사" ${S.ind ? '' : 'required'}></label>
           <label>업무<select name="biz">${Object.keys(BIZ).map((b) => `<option ${b === S.biz ? 'selected' : ''}>${b}</option>`).join('')}</select></label>
           <label>기간<select name="months">${[['1', '최근 1개월'], ['3', '최근 3개월'], ['6', '최근 6개월'], ['12', '최근 1년']].map(([v, t]) => `<option value="${v}" ${S.months === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
           <label>문서 종류<select name="doc">${['전체', '제안요청서', '과업지시서', '규격서', '내역서'].map((v) => `<option ${S.doc === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
           <button class="btn primary" type="submit">유사사업 검색</button>
         </form>
-        <p class="small muted" style="margin:10px 0 0">전국 모든 기관의 입찰공고에서 공고명으로 찾습니다. 기간이 길수록 조회가 오래 걸립니다.</p>
+        ${S.ind ? `<p class="small" style="margin:10px 0 0">업종 조건: <span class="badge blue">${esc(S.ind)} ${esc(indIt ? indIt.nm : '')}</span> <a href="${esc(hashOf('similar', S.q))}">업종 조건 빼기</a></p>` : ''}
+        <p class="small muted" style="margin:10px 0 0">전국 모든 기관의 입찰공고에서 찾습니다. 기간이 길수록 조회가 오래 걸립니다.</p>
       </section>
       <div class="row" style="align-items:flex-start">
         <div id="slist" style="flex:3 1 480px;min-width:0;display:flex;flex-direction:column;gap:12px"></div>
         <aside class="card" id="ssum" style="flex:1 1 240px"></aside>
       </div>`;
-    $('#sform').addEventListener('submit', (e) => {
+    const f = $('#sform');
+    f.addEventListener('submit', (e) => {
       e.preventDefault();
-      const f = e.target;
-      S.q = f.q.value.trim(); S.biz = f.biz.value; S.months = f.months.value; S.doc = f.doc.value;
-      if (!S.q) return;
-      searchSimilar();
+      const q = f.q.value.trim();
+      S.biz = f.biz.value; S.months = f.months.value; S.doc = f.doc.value;
+      if (!q && !S.ind) return;
+      if (q !== S.q) { S.q = q; S.key = q + '|' + S.ind; S.items = null; go('similar', q, { ind: S.ind }); } else searchSimilar();
     });
-    $('#sform').doc.addEventListener('change', (e) => { S.doc = e.target.value; drawSimilar(); });
-    if (S.q && !S.items && !S.err) searchSimilar(); else drawSimilar();
+    f.doc.addEventListener('change', (e) => { S.doc = e.target.value; drawSimilar(); });
+    if ((S.q || S.ind) && !S.items && !S.err) searchSimilar(); else drawSimilar();
   }
 
   async function searchSimilar() {
     $('#slist').innerHTML = loading('유사사업을 찾는 중…');
     $('#ssum').innerHTML = '';
     S.err = null;
+    const my = ++S.seq;
     const to = iso(today());
     const from = iso(addDays(today(), -Math.round(Number(S.months) * 30.4)));
     const chunks = monthChunks(from, to);
     const res = await Promise.allSettled(chunks.map((ch) => g2bAll('bid', `getBidPblancListInfo${BIZ[S.biz]}PPSSrch`, {
-      inqryDiv: 1, inqryBgnDt: ch.bgn, inqryEndDt: ch.end, bidNtceNm: S.q,
+      inqryDiv: 1, inqryBgnDt: ch.bgn, inqryEndDt: ch.end, bidNtceNm: S.q, indstrytyCd: S.ind,
     }, { per: 300, max: 300 })));
+    if (my !== S.seq) return;
     const map = new Map();
     const errs = [];
     res.forEach((r) => {
@@ -509,7 +651,7 @@
         if (!prev || String(n.bidNtceOrd) > String(prev.bidNtceOrd)) map.set(n.bidNtceNo, n);
       });
     });
-    S.items = Array.from(map.values()).sort((a, b) => String(b.bidNtceDt).localeCompare(String(a.bidNtceDt)));
+    S.items = Array.from(map.values()).sort(byDateDesc('bidNtceDt'));
     S.err = !S.items.length && errs.length ? errs[0] : null;
     drawSimilar();
   }
@@ -553,7 +695,7 @@
         <dt>추정가격 최대</dt><dd><strong>${won(amts.length ? Math.max(...amts) : 0)}</strong></dd>
       </dl>
       <button type="button" class="btn" id="scsv" style="width:100%;margin-top:16px;justify-content:center">검색 결과 CSV 내보내기</button>`;
-    $('#scsv').addEventListener('click', () => downloadCsv(`유사사업_${S.q}_${iso(today())}.csv`,
+    $('#scsv').addEventListener('click', () => downloadCsv(`유사사업_${S.q || S.ind}_${iso(today())}.csv`,
       [['공고명', '기관', '공고일', '계약방법', '추정가격', '배정예산', '공고번호', '나라장터']].concat(shown.map((n) => [n.bidNtceNm, n.dminsttNm || n.ntceInsttNm, dateOnly(n.bidNtceDt), n.cntrctCnclsMthdNm, num(n.presmptPrce), num(n.asignBdgtAmt), n.bidNtceNo, n.bidNtceDtlUrl || '']))));
   }
 
@@ -579,10 +721,13 @@
     } catch (e) { sub.innerHTML = `<div class="sub">${errBox(e.message)}</div>`; }
   }
 
-  // ---------- 4. 공고 준비 · 확인 ----------
-  const N = { from: iso(addDays(today(), -30)), to: iso(today()), q: '', items: null, err: null, sel: null };
+  // =====================================================================
+  // 4. 공고 준비 · 확인
+  // =====================================================================
+  const N = { from: iso(addDays(today(), -30)), to: iso(today()), q: '', items: null, err: null, sel: null, want: null, seq: 0 };
 
-  function renderNotice(view) {
+  function renderNotice(view, arg, params) {
+    N.want = params.n || null;
     view.innerHTML = `
       <section class="card">
         <h2>우리 기관 공고 현황</h2>
@@ -599,16 +744,19 @@
     $('#nform').addEventListener('submit', (e) => {
       e.preventDefault();
       const f = e.target;
-      N.from = f.from.value; N.to = f.to.value; N.q = f.q.value.trim(); N.sel = null;
+      N.from = f.from.value; N.to = f.to.value; N.q = f.q.value.trim(); N.want = null;
+      replaceHash('notice', '', {});
       searchNotices();
     });
-    if (!N.items && !N.err) searchNotices(); else { drawNotices(); if (N.sel) drawNoticeDetail(N.sel); }
+    if (N.items || N.err) applyNoticeSel(false); else searchNotices();
   }
+  function updateNotice(params) { N.want = params.n || null; applyNoticeSel(true); return true; }
 
   async function searchNotices() {
     const box = $('#nlist');
     box.innerHTML = loading();
     N.err = null;
+    const my = ++N.seq;
     const chunks = monthChunks(N.from, N.to);
     const instKey = settings.insttDivCd === '2' ? 'dminsttNm' : 'ntceInsttNm';
     const jobs = [];
@@ -616,15 +764,25 @@
       g2bAll('bid', `getBidPblancListInfo${BIZ[b]}PPSSrch`, { inqryDiv: 1, inqryBgnDt: ch.bgn, inqryEndDt: ch.end, [instKey]: settings.insttNm, bidNtceNm: N.q }, { max: 1000 })
         .then((r) => r.items.map((x) => Object.assign({ _biz: b }, x))))));
     const res = await Promise.allSettled(jobs);
+    if (my !== N.seq) return;
     const map = new Map();
     const errs = [];
     res.forEach((r) => {
       if (r.status !== 'fulfilled') { errs.push(r.reason.message); return; }
       r.value.forEach((n) => { const p = map.get(n.bidNtceNo); if (!p || String(n.bidNtceOrd) > String(p.bidNtceOrd)) map.set(n.bidNtceNo, n); });
     });
-    N.items = Array.from(map.values()).sort((a, b) => String(b.bidNtceDt).localeCompare(String(a.bidNtceDt)));
+    N.items = Array.from(map.values()).sort(byDateDesc('bidNtceDt'));
     N.err = !N.items.length && errs.length ? errs[0] : null;
+    applyNoticeSel(false);
+  }
+
+  function applyNoticeSel(reveal) {
+    const sel = N.want && N.items ? N.items.find((x) => x.bidNtceNo === N.want) : null;
+    N.sel = sel || null;
     drawNotices();
+    const box = $('#ndetail');
+    if (!box) return;
+    if (sel) { drawNoticeDetail(sel); if (reveal) revealIfNew(box); } else { box.hidden = true; box.innerHTML = ''; }
   }
 
   function noticeStatus(n) {
@@ -641,14 +799,13 @@
     if (N.err) { box.innerHTML = errBox(N.err); return; }
     if (!N.items) { box.innerHTML = loading(); return; }
     if (!N.items.length) { box.innerHTML = empty('기간 내 공고가 없습니다. 설정의 기관명이나 기간을 확인하세요.'); return; }
-    box.innerHTML = `<div class="small muted" style="margin-bottom:6px">총 ${N.items.length}건</div><div class="tablewrap"><table>
+    box.innerHTML = `<div class="small muted" style="margin-bottom:6px">총 ${N.items.length}건 · 공고일 최근순</div><div class="tablewrap"><table>
       <thead><tr><th>공고명</th><th>업무</th><th>공고일</th><th>입찰마감</th><th>상태</th><th>문서</th><th>바로가기</th></tr></thead>
-      <tbody>${N.items.map((n, i) => { const [st, cls] = noticeStatus(n); return `<tr class="${N.sel && N.sel.bidNtceNo === n.bidNtceNo ? 'sel' : ''}">
-        <td><button type="button" class="linkbtn" data-i="${i}">${esc(n.bidNtceNm)}</button><div class="small muted">${esc(n.bidNtceNo)}-${esc(n.bidNtceOrd)}</div></td>
+      <tbody>${N.items.map((n) => { const [st, cls] = noticeStatus(n); return `<tr class="${N.sel === n ? 'sel' : ''}">
+        <td><a class="linkbtn" href="${esc(hashOf('notice', '', { n: n.bidNtceNo }))}">${esc(n.bidNtceNm)}</a><div class="small muted">${esc(n.bidNtceNo)}-${esc(n.bidNtceOrd)}</div></td>
         <td class="nw">${esc(n._biz)}</td><td class="nw">${esc(dateOnly(n.bidNtceDt))}</td><td class="nw">${esc(dt(n.bidClseDt) || '-')}</td>
         <td><span class="badge ${cls}">${esc(st)}</span></td><td class="nw">${noticeDocs(n).length}개</td><td class="nw">${ext(n.bidNtceDtlUrl || n.bidNtceUrl)}</td></tr>`; }).join('')}</tbody>
     </table></div>`;
-    $$('button[data-i]', box).forEach((b) => b.addEventListener('click', () => { N.sel = N.items[Number(b.dataset.i)]; drawNotices(); drawNoticeDetail(N.sel); $('#ndetail').scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
   }
 
   function drawNoticeDetail(n) {
@@ -660,7 +817,7 @@
         <h2>${esc(n.bidNtceNm)}</h2><span class="small muted">${esc(n.bidNtceNo)}-${esc(n.bidNtceOrd)}</span>
       </div>
       <dl class="kv">
-        <dt>계약방법</dt><dd>${esc(n.cntrctCnclsMthdNm || '-')} · ${esc(n.bidMethdNm || '')}</dd>
+        <dt>계약방법</dt><dd>${esc(n.cntrctCnclsMthdNm || '-')}${n.bidMethdNm ? ' · ' + esc(n.bidMethdNm) : ''}</dd>
         <dt>낙찰방법</dt><dd>${esc(n.sucsfbidMthdNm || '-')}${n.sucsfbidLwltRate ? ` · 낙찰하한율 ${esc(n.sucsfbidLwltRate)}%` : ''}</dd>
         <dt>추정가격</dt><dd>${won(n.presmptPrce)} <span class="small muted">· 배정예산 ${won(n.asignBdgtAmt)}</span></dd>
         ${n.techAbltEvlRt || n.bidPrceEvlRt ? `<dt>평가 비율</dt><dd>기술 ${esc(n.techAbltEvlRt || '-')} : 가격 ${esc(n.bidPrceEvlRt || '-')}</dd>` : ''}
@@ -672,7 +829,7 @@
       <h3 style="margin-top:16px">공고문서</h3>
       ${docChips(noticeDocs(n))}
       <div class="btns" style="margin-top:14px">
-        <button type="button" class="btn sm" data-x="lic">면허제한</button>
+        <button type="button" class="btn sm" data-x="lic">면허제한 · 근거법규</button>
         <button type="button" class="btn sm" data-x="rgn">참가가능지역</button>
         ${extra ? '<button type="button" class="btn sm" data-x="bss">기초금액</button><button type="button" class="btn sm" data-x="chg">정정(변경) 이력</button>' : ''}
         <button type="button" class="btn sm" data-x="eo">e발주 문서</button>
@@ -693,7 +850,7 @@
       let html = '';
       if (x === 'lic') {
         const r = await g2b('bid', 'getBidPblancListInfoLicenseLimit', { inqryDiv: 2, bidNtceNo: n.bidNtceNo, bidNtceOrd: n.bidNtceOrd, numOfRows: 50 });
-        html = `<h3>면허제한</h3>${r.items.length ? `<div class="tablewrap"><table><thead><tr><th>면허제한명</th><th>허용업종</th><th>주력분야</th></tr></thead><tbody>${r.items.map((l) => `<tr><td>${esc(l.lcnsLmtNm)}</td><td>${esc(l.permsnIndstrytyList || '-')}</td><td>${esc(l.indstrytyMfrcFldList || '-')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="small muted">면허제한이 없습니다.</div>'}`;
+        html = `<h3>면허제한</h3>${r.items.length ? `<div class="tablewrap"><table><thead><tr><th>면허제한명</th><th>허용업종</th><th>주력분야</th><th>근거법규</th></tr></thead><tbody>${r.items.map((l) => `<tr><td>${esc(l.lcnsLmtNm)}</td><td>${esc(l.permsnIndstrytyList || '-')}</td><td>${esc(l.indstrytyMfrcFldList || '-')}</td><td class="indref" data-nm="${esc(l.lcnsLmtNm)}"><span class="small muted">…</span></td></tr>`).join('')}</tbody></table></div>` : '<div class="small muted">면허제한이 없습니다.</div>'}`;
       } else if (x === 'rgn') {
         const r = await g2b('bid', 'getBidPblancListInfoPrtcptPsblRgn', { inqryDiv: 2, bidNtceNo: n.bidNtceNo, bidNtceOrd: n.bidNtceOrd, numOfRows: 50 });
         html = `<h3>참가가능지역</h3>${r.items.length ? `<div class="docs">${r.items.map((g) => `<span class="badge blue">${esc(g.prtcptPsblRgnNm)}</span>`).join('')}</div>` : '<div class="small muted">지역 제한이 없습니다.</div>'}`;
@@ -706,13 +863,33 @@
         html = `<h3>정정(변경) 이력</h3>${r.items.length ? `<div class="tablewrap"><table><thead><tr><th>변경일시</th><th>항목</th><th>변경 전</th><th>변경 후</th></tr></thead><tbody>${r.items.map((h) => `<tr><td class="nw">${esc(dt(h.chgDt))}</td><td>${esc(h.chgItemNm)}</td><td>${esc(h.bfchgVal || '-')}</td><td>${esc(h.afchgVal || '-')}</td></tr>`).join('')}</tbody></table></div>` : '<div class="small muted">변경이력이 없습니다.</div>'}`;
       }
       sub.innerHTML = `<div class="sub">${html}</div>`;
+      fillIndRefs(sub);
     } catch (e) { sub.innerHTML = `<div class="sub">${errBox(e.message)}</div>`; }
   }
 
-  // ---------- 5. 법령 · 해석 찾기 ----------
-  const L = { q: '', search: '1', from: '', to: '', sort: 'ddes', page: 1, list: null, total: 0, err: null, selId: null, detail: null, detailErr: null };
+  // =====================================================================
+  // 5. 법령 · 해석 찾기 (탭: 조달청 법령해석 / 업종 · 근거법규)
+  // =====================================================================
+  const L = { tab: 'expc', q: '', search: '1', from: '', to: '', sort: 'ddes', page: 1, list: null, total: 0, err: null, selId: null, want: null, detail: null, detailErr: null, seq: 0, dseq: 0 };
 
-  // 법제처 응답 키 이름이 바뀌어도 동작하도록 느슨하게 찾음
+  function renderLaw(view, arg, params) {
+    L.tab = params.tab === 'ind' ? 'ind' : 'expc';
+    view.innerHTML = `
+      <div class="tabs" role="tablist" aria-label="법령 메뉴 구분" style="margin:0">
+        <a class="tab" role="tab" href="${esc(hashOf('law', L.q))}" aria-selected="${L.tab === 'expc'}">조달청 법령해석</a>
+        <a class="tab" role="tab" href="#law?tab=ind" aria-selected="${L.tab === 'ind'}">업종 · 근거법규</a>
+      </div>
+      <div id="lawpane" style="display:flex;flex-direction:column;gap:16px"></div>`;
+    if (L.tab === 'ind') renderInd($('#lawpane'), params); else renderExpc($('#lawpane'), arg, params);
+  }
+  function updateLaw(params) {
+    const tab = params.tab === 'ind' ? 'ind' : 'expc';
+    if (tab !== L.tab) return false;
+    if (tab === 'ind') { I.want = params.ind || null; applyIndSel(true); } else { L.want = params.id || null; applyLawSel(true); }
+    return true;
+  }
+
+  // ----- 조달청 법령해석 -----
   function findArray(o, depth = 0) {
     if (!o || typeof o !== 'object' || depth > 5) return null;
     if (Array.isArray(o)) return o.length && typeof o[0] === 'object' ? o : null;
@@ -730,9 +907,10 @@
   const lawId = (o) => F(o, ['법령해석일련번호', 'ppsCgmExpcSeq', 'id', 'ID']);
   const fmtLawDate = (v) => { const s = String(v || ''); return /^\d{8}$/.test(s) ? `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6)}` : s; };
 
-  function renderLaw(view, arg) {
-    if (arg && arg !== L.q) { Object.assign(L, { q: arg, page: 1, list: null, err: null, selId: null, detail: null }); }
-    view.innerHTML = `
+  function renderExpc(pane, arg, params) {
+    if (arg !== L.q) Object.assign(L, { q: arg, page: 1, list: null, err: null, selId: null, detail: null });
+    L.want = params.id || null;
+    pane.innerHTML = `
       <section class="card">
         <form class="form" id="lform">
           <label class="grow">키워드<input type="search" name="q" value="${esc(L.q)}" placeholder="예: 협상에 의한 계약, 수의계약"></label>
@@ -750,22 +928,28 @@
     $('#lform').addEventListener('submit', (e) => {
       e.preventDefault();
       const f = e.target;
-      Object.assign(L, { q: f.q.value.trim(), search: f.search.value, from: f.from.value, to: f.to.value, sort: f.sort.value, page: 1, selId: null, detail: null });
-      searchLaw();
+      const q = f.q.value.trim();
+      Object.assign(L, { search: f.search.value, from: f.from.value, to: f.to.value, sort: f.sort.value, page: 1 });
+      if (q !== L.q) { L.q = q; L.list = null; L.selId = null; L.detail = null; go('law', q); }
+      else { L.want = null; L.selId = null; L.detail = null; replaceHash('law', L.q, {}); searchLaw(); }
     });
-    if (!L.list && !L.err) searchLaw(); else { drawLawList(); drawLawDetail(); }
+    if (!L.list && !L.err) searchLaw(); else { drawLawList(); applyLawSel(false); }
   }
 
   async function searchLaw() {
-    $('#llist').innerHTML = loading();
+    const box = $('#llist');
+    if (!box) return;
+    box.innerHTML = loading();
     L.err = null;
+    const my = ++L.seq;
     try {
       const data = await lawApi('list', { query: L.q, search: L.search, display: 20, page: L.page, sort: L.sort, explYd: L.from && L.to ? `${ymd(L.from)}~${ymd(L.to)}` : '' });
+      if (my !== L.seq) return;
       L.list = findArray(data) || [];
       L.total = num(findVal(data, ['totalCnt', 'totalCount'])) || L.list.length;
-    } catch (e) { L.list = null; L.err = e.message; }
+    } catch (e) { if (my !== L.seq) return; L.list = null; L.err = e.message; }
     drawLawList();
-    drawLawDetail();
+    applyLawSel(false);
   }
 
   function drawLawList() {
@@ -775,49 +959,57 @@
     if (!L.list) { box.innerHTML = loading(); return; }
     if (!L.list.length) { box.innerHTML = empty('검색 결과가 없습니다.'); return; }
     const pages = Math.max(1, Math.ceil(L.total / 20));
-    box.innerHTML = `<div class="small muted" style="padding:6px 12px">총 ${L.total.toLocaleString()}건</div><div class="lawlist">${L.list.map((x, i) => `
-      <button type="button" class="lawitem" data-i="${i}" aria-current="${lawId(x) === L.selId}">
+    box.innerHTML = `<div class="small muted" style="padding:6px 12px">총 ${L.total.toLocaleString()}건</div><div class="lawlist">${L.list.map((x) => `
+      <a class="lawitem" href="${esc(hashOf('law', L.q, { id: lawId(x) }))}" aria-current="${lawId(x) === (L.want || L.selId)}">
         <span style="display:block;font-weight:500">${esc(F(x, ['안건명']))}</span>
         <span class="small muted" style="display:block;margin-top:4px">${esc(F(x, ['안건번호']))} · ${esc(fmtLawDate(F(x, ['해석일자'])))} · ${esc(F(x, ['해석기관명']))}</span>
-      </button>`).join('')}</div>
+      </a>`).join('')}</div>
       <div class="pager" style="padding:0 12px 8px">
         <button type="button" class="btn sm" id="lprev" ${L.page <= 1 ? 'disabled' : ''}>이전</button>
         <span class="small muted">${L.page} / ${pages}</span>
         <button type="button" class="btn sm" id="lnext" ${L.page >= pages ? 'disabled' : ''}>다음</button>
       </div>`;
-    $$('.lawitem', box).forEach((b) => b.addEventListener('click', () => openLaw(L.list[Number(b.dataset.i)])));
     $('#lprev').addEventListener('click', () => { L.page--; searchLaw(); });
     $('#lnext').addEventListener('click', () => { L.page++; searchLaw(); });
   }
 
-  async function openLaw(item) {
-    L.selId = lawId(item);
-    L.detail = null; L.detailErr = null;
-    drawLawList();
-    const box = $('#ldetail');
-    box.innerHTML = loading();
-    if (window.matchMedia('(max-width: 900px)').matches) box.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    try { L.detail = await lawApi('detail', { ID: L.selId }); } catch (e) { L.detailErr = e.message; }
-    drawLawDetail(item);
+  function applyLawSel(reveal) {
+    if (!$('#ldetail')) return;
+    if (!L.want) { L.selId = null; L.detail = null; drawLawList(); drawLawDetail(); return; }
+    if (L.want === L.selId && (L.detail || L.detailErr)) { drawLawDetail(); return; }
+    openLaw(L.want, reveal);
   }
 
-  function drawLawDetail(item) {
+  async function openLaw(id, reveal) {
+    L.selId = id;
+    L.detail = null; L.detailErr = null;
+    if (L.list) drawLawList();
+    const box = $('#ldetail');
+    box.innerHTML = loading();
+    if (reveal && window.matchMedia('(max-width: 900px)').matches) revealIfNew(box);
+    const my = ++L.dseq;
+    try { const d = await lawApi('detail', { ID: id }); if (my !== L.dseq) return; L.detail = d; } catch (e) { if (my !== L.dseq) return; L.detailErr = e.message; }
+    drawLawDetail();
+  }
+
+  function drawLawDetail() {
     const box = $('#ldetail');
     if (!box) return;
     if (!L.selId) { box.innerHTML = empty('왼쪽 목록에서 해석을 선택하세요.'); return; }
     if (L.detailErr) { box.innerHTML = errBox(L.detailErr); return; }
     if (!L.detail) { box.innerHTML = loading(); return; }
     const d = L.detail;
+    const item = (L.list || []).find((x) => lawId(x) === L.selId);
     const title = F(d, ['안건명']) || (item ? F(item, ['안건명']) : '');
     const refs = F(d, ['관련법령']).split(/\n|,(?=\s*「)|<br\s*\/?>|\s{2,}/).map((s) => s.trim()).filter(Boolean);
-    const lawLink = (r) => { const nm = (r.match(/「([^」]+)」/) || [])[1] || r.replace(/\s*제\s*\d+.*$/, ''); return 'https://www.law.go.kr/법령/' + encodeURIComponent(nm.replace(/\s+/g, '')); };
+    const refLink = (r) => lawUrl((r.match(/「([^」]+)」/) || [])[1] || r.replace(/\s*제\s*\d+.*$/, ''));
     const sec = (h, v) => `<h3>${h}</h3><p class="lawbody">${esc(v || '-')}</p>`;
     box.innerHTML = `
       <div class="small muted">안건번호 ${esc(F(d, ['안건번호']))} · 해석일자 ${esc(fmtLawDate(F(d, ['해석일자'])))} · 해석기관 ${esc(F(d, ['해석기관명']))} · 질의기관 ${esc(F(d, ['질의기관명']))}</div>
       <h2 style="margin:6px 0 16px;font-size:18px">${esc(title)}</h2>
       ${sec('질의요지', F(d, ['질의요지']))}${sec('회답', F(d, ['회답']))}${sec('이유', F(d, ['이유']))}
       <h3>관련법령</h3>
-      <div class="docs" style="margin:0 0 18px">${refs.length ? refs.map((r) => `<a class="doc" href="${esc(lawLink(r))}" target="_blank" rel="noopener">${esc(r)} ↗</a>`).join('') : '<span class="small muted">-</span>'}</div>
+      <div class="docs" style="margin:0 0 18px">${refs.length ? refs.map((r) => `<a class="doc" href="${esc(refLink(r))}" target="_blank" rel="noopener">${esc(r)} ↗</a>`).join('') : '<span class="small muted">-</span>'}</div>
       <div class="btns">
         <a class="btn primary" href="/api/law?mode=html&ID=${encodeURIComponent(L.selId)}" target="_blank" rel="noopener">법제처 원문 보기 ↗</a>
         <button type="button" class="btn" id="lsave">보관함에 저장</button>
@@ -825,7 +1017,91 @@
     $('#lsave').addEventListener('click', () => saveItem({ kind: '법령해석', key: L.selId, name: title, link: '/api/law?mode=html&ID=' + encodeURIComponent(L.selId) }));
   }
 
-  // ---------- 6. 내 보관함 ----------
+  // ----- 업종 · 근거법규 -----
+  function renderInd(pane, params) {
+    I.want = params.ind || null;
+    pane.innerHTML = `
+      <section class="card">
+        <form class="form" id="iform">
+          <label class="grow">업종명 또는 업종코드<input type="search" name="q" value="${esc(I.q)}" placeholder="예: 정보통신공사업, 소프트웨어, 0001" autocomplete="off"></label>
+          <label>법 분야(업종분류)<select name="cls" id="icls"><option value="">전체</option></select></label>
+          <button class="btn primary" type="submit">업종 검색</button>
+        </form>
+        <p class="small muted" style="margin:10px 0 0">나라장터 입찰참가자격 업종별 근거법령 · 관련규정 · 포함면허 (현재 사용 중인 업종 기준). 입력하는 대로 바로 걸러집니다.</p>
+      </section>
+      <div class="row" style="align-items:flex-start">
+        <section class="card" style="flex:1 1 320px" id="ilist"></section>
+        <article class="card wide" style="flex:1.3 1 420px" id="idetail"></article>
+      </div>`;
+    const f = $('#iform');
+    let t;
+    f.q.addEventListener('input', () => { clearTimeout(t); t = setTimeout(() => { I.q = f.q.value.trim(); drawIndList(); }, 200); });
+    f.cls.addEventListener('change', () => { I.cls = f.cls.value; drawIndList(); });
+    f.addEventListener('submit', (e) => { e.preventDefault(); I.q = f.q.value.trim(); I.cls = f.cls.value; drawIndList(); });
+    $('#ilist').innerHTML = loading('업종 목록을 불러오는 중…');
+    ensureInd().then(() => {
+      const sel = $('#icls');
+      if (!sel) return;
+      const cls = new Map();
+      I.all.forEach((x) => { if (x.cc && !cls.has(x.cc)) cls.set(x.cc, x.cn || x.cc); });
+      sel.innerHTML = '<option value="">전체</option>' + Array.from(cls.entries()).sort((a, b) => a[1].localeCompare(b[1], 'ko')).map(([c, n]) => `<option value="${esc(c)}" ${I.cls === c ? 'selected' : ''}>${esc(n)}</option>`).join('');
+      drawIndList();
+      applyIndSel(false);
+    }).catch((e) => { const b = $('#ilist'); if (b) b.innerHTML = errBox(e.message); drawIndDetail(); });
+    drawIndDetail();
+  }
+
+  function indFiltered() {
+    const q = I.q.toLowerCase();
+    return (I.all || []).filter((x) => (!I.cls || x.cc === I.cls) && (!q || x.nm.toLowerCase().includes(q) || x.cd.includes(q) || x.law.toLowerCase().includes(q)));
+  }
+  function drawIndList() {
+    const box = $('#ilist');
+    if (!box || !I.all) return;
+    const rows = indFiltered();
+    const shown = rows.slice(0, 200);
+    box.innerHTML = `<div class="small muted" style="margin-bottom:6px">${rows.length.toLocaleString()}개 업종${rows.length > 200 ? ' · 상위 200개 표시 (검색어를 더 입력하세요)' : ''}</div>
+      ${shown.length ? `<div class="tablewrap"><table style="min-width:420px">
+        <thead><tr><th>코드</th><th>업종명</th><th>근거법령</th></tr></thead>
+        <tbody>${shown.map((x) => `<tr class="${x.cd === I.want ? 'sel' : ''}"><td class="nw">${esc(x.cd)}</td><td><a class="linkbtn" href="${esc(hashOf('law', '', { tab: 'ind', ind: x.cd }))}">${esc(x.nm)}</a></td><td class="small">${esc(x.law || '-')}</td></tr>`).join('')}</tbody>
+      </table></div>` : empty('조건에 맞는 업종이 없습니다.')}`;
+  }
+  function applyIndSel(reveal) {
+    drawIndList();
+    drawIndDetail();
+    if (reveal && I.want && window.matchMedia('(max-width: 900px)').matches) revealIfNew($('#idetail'));
+  }
+  function drawIndDetail() {
+    const box = $('#idetail');
+    if (!box) return;
+    if (!I.want) { box.innerHTML = empty('왼쪽 목록에서 업종을 선택하세요.'); return; }
+    if (!I.all) { box.innerHTML = I.err ? errBox(I.err) : loading(); return; }
+    const it = indByCode(I.want);
+    if (!it) { box.innerHTML = empty(`업종코드 ${I.want}를 찾지 못했습니다. (폐지되었거나 사용하지 않는 업종일 수 있습니다)`); return; }
+    const incl = parseIncl(it.incl);
+    const codeLink = (cd, nm) => (cd && indByCode(cd) ? `<a href="${esc(hashOf('law', '', { tab: 'ind', ind: cd }))}">${esc(nm || cd)}</a>` : esc(nm || cd));
+    box.innerHTML = `
+      <div class="small muted">업종코드 ${esc(it.cd)} · 분류 ${esc(it.cn || it.cc || '-')}</div>
+      <h2 style="margin:6px 0 16px;font-size:19px">${esc(it.nm)}</h2>
+      <dl class="kv">
+        <dt>근거법령</dt><dd><strong>${esc([it.law, it.art].filter(Boolean).join(' ') || '-')}</strong>
+          ${it.law ? `<a href="${esc(lawUrl(it.law))}" target="_blank" rel="noopener" style="margin-left:6px" class="small">국가법령정보센터 ↗</a>` : ''}
+          ${it.url ? `<a href="${esc(it.url)}" target="_blank" rel="noopener" style="margin-left:6px" class="small">나라장터 근거법령 ↗</a>` : ''}</dd>
+        <dt>관련규정</dt><dd style="line-height:1.7">${esc(it.rule || '-')}</dd>
+        <dt>포함면허</dt><dd>${incl.length ? `<div style="display:flex;flex-direction:column;gap:6px">${incl.map((x) => `<span>${codeLink(x.aCd, x.aNm)} <span class="muted">→</span> ${codeLink(x.bCd, x.bNm)}</span>`).join('')}</div>` : '<span class="muted">-</span>'}</dd>
+        <dt>등록 · 변경</dt><dd>${esc(dt(it.rg) || '-')}${it.ch ? ' · 변경 ' + esc(dt(it.ch)) : ''}</dd>
+      </dl>
+      <div class="btns" style="margin-top:18px">
+        <a class="btn sm" href="${esc(hashOf('law', it.nm.replace(/\(.*?\)/g, '').trim()))}">이 업종 관련 법령해석</a>
+        <a class="btn sm" href="${esc(hashOf('similar', '', { ind: it.cd }))}">이 업종 제한 공고 찾기</a>
+        <button type="button" class="btn sm" id="isave">보관함에 저장</button>
+      </div>`;
+    $('#isave').addEventListener('click', () => saveItem({ kind: '업종', key: it.cd, name: `${it.nm} (${it.cd})`, link: hashOf('law', '', { tab: 'ind', ind: it.cd }) }));
+  }
+
+  // =====================================================================
+  // 6. 내 보관함
+  // =====================================================================
   let savedTab = '전체';
   function renderSaved(view) {
     const all = getSaved();
@@ -834,7 +1110,7 @@
       <section class="card">
         <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;margin-bottom:4px">
           <div class="tabs" role="tablist" aria-label="보관함 구분" style="margin:0">
-            ${['전체', '계약', '공고', '업체', '법령해석'].map((t) => `<button type="button" class="tab" role="tab" data-t="${t}" aria-selected="${t === savedTab}">${t}</button>`).join('')}
+            ${['전체', '계약', '공고', '업체', '법령해석', '업종'].map((t) => `<button type="button" class="tab" role="tab" data-t="${t}" aria-selected="${t === savedTab}">${t}</button>`).join('')}
           </div>
           <button type="button" class="btn" id="svcsv" ${list.length ? '' : 'disabled'}>CSV 내보내기</button>
         </div>
@@ -853,7 +1129,7 @@
     $$('.memo', view).forEach((inp) => inp.addEventListener('change', () => { const a = getSaved(); if (a[inp.dataset.idx]) { a[inp.dataset.idx].memo = inp.value; store.set('cne.saved', a); toast('메모를 저장했습니다.'); } }));
     $$('button[data-del]', view).forEach((b) => b.addEventListener('click', () => { const a = getSaved(); a.splice(Number(b.dataset.del), 1); store.set('cne.saved', a); renderSaved(view); }));
     const csv = $('#svcsv');
-    if (csv) csv.addEventListener('click', () => downloadCsv(`보관함_${iso(today())}.csv`, [['구분', '항목', '메모', '저장일', '링크']].concat(list.map((s) => [s.kind, s.name, s.memo, s.date, s.link && !s.link.startsWith('#') ? new URL(s.link, location.href).href : '']))));
+    if (csv) csv.addEventListener('click', () => downloadCsv(`보관함_${iso(today())}.csv`, [['구분', '항목', '메모', '저장일', '링크']].concat(list.map((s) => [s.kind, s.name, s.memo, s.date, s.link ? new URL(s.link, location.href).href : '']))));
   }
 
   function downloadCsv(filename, rows) {
@@ -867,7 +1143,9 @@
     setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
   }
 
-  // ---------- 7. 설정 ----------
+  // =====================================================================
+  // 7. 설정
+  // =====================================================================
   function renderSettings(view, arg) {
     const admin = arg === 'check'; // 관리자 점검용: 주소 끝에 #settings/check 를 붙이면 연결 상태가 보임
     view.innerHTML = `
@@ -895,20 +1173,21 @@
           <p class="small muted" style="margin:12px 0 0">인증키는 이 화면이나 브라우저에 저장되지 않고, Cloudflare 환경변수에만 있습니다.</p>
         </section>` : ''}
       </div>`;
+    const resetData = () => { C.data = null; C.recent = null; N.items = null; };
     $('#setform').addEventListener('submit', (e) => {
       e.preventDefault();
       const f = e.target;
       const bizs = $$('input[name=bizs]:checked', f).map((x) => x.value);
       settings = { insttNm: f.insttNm.value.trim() || DEFAULTS.insttNm, insttDivCd: f.insttDivCd.value, bizs: bizs.length ? bizs : DEFAULTS.bizs.slice() };
       store.set('cne.settings', settings);
-      C.data = null; C.recent = null; N.items = null;
+      resetData();
       toast('설정을 저장했습니다.');
     });
-    $('#setreset').addEventListener('click', () => { settings = Object.assign({}, DEFAULTS, { bizs: DEFAULTS.bizs.slice() }); store.set('cne.settings', settings); C.data = null; C.recent = null; N.items = null; renderSettings(view, arg); toast('기본값으로 되돌렸습니다.'); });
+    $('#setreset').addEventListener('click', () => { settings = Object.assign({}, DEFAULTS, { bizs: DEFAULTS.bizs.slice() }); store.set('cne.settings', settings); resetData(); renderSettings(view, arg); toast('기본값으로 되돌렸습니다.'); });
     if (!admin) return;
     fetch('/api/health').then((r) => r.json()).then((h) => {
       const row = (name, src, ok) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;background:var(--soft);border-radius:8px;margin-bottom:8px"><div><div>${name}</div><div class="small muted">${src}</div></div><span class="badge ${ok ? 'grn' : 'red'}">${ok ? '키 설정됨' : '키 없음'}</span></div>`;
-      $('#health').innerHTML = row('나라장터 입찰공고 · 계약 · 사용자정보', '공공데이터포털 인증키 (G2B_SERVICE_KEY)', h.g2b) + row('조달청 법령해석 목록 · 본문', '법제처 OC (LAW_OC)', h.law);
+      $('#health').innerHTML = row('나라장터 입찰공고 · 계약 · 사용자정보 · 업종', '공공데이터포털 인증키 (G2B_SERVICE_KEY)', h.g2b) + row('조달청 법령해석 목록 · 본문', '법제처 OC (LAW_OC)', h.law);
     }).catch(() => { $('#health').innerHTML = errBox('상태를 확인하지 못했습니다.'); });
     $('#htest').addEventListener('click', async () => {
       const out = $('#htestres');
@@ -918,6 +1197,7 @@
         ['입찰공고정보서비스', () => g2b('bid', 'getBidPblancListInfoServcPPSSrch', { inqryDiv: 1, inqryBgnDt: d + '0000', inqryEndDt: d + '2359', numOfRows: 1 })],
         ['계약정보서비스', () => g2b('cntrct', 'getCntrctInfoListServcPPSSrch', { inqryDiv: 1, inqryBgnDate: d, inqryEndDate: d, numOfRows: 1 })],
         ['사용자정보서비스', () => g2b('usr', 'getDminsttInfo02', { inqryDiv: 1, inqryBgnDt: d + '0000', inqryEndDt: d + '2359', numOfRows: 1 })],
+        ['업종 및 근거법규서비스', () => g2b('ind', 'getIndstrytyBaseLawrgltInfoList', { numOfRows: 1 })],
         ['법제처 법령해석', () => lawApi('list', { query: '계약', display: 1 })],
       ];
       const res = await Promise.allSettled(tests.map((t) => t[1]()));
@@ -925,42 +1205,54 @@
     });
   }
 
-  // ---------- 라우팅 ----------
+  // =====================================================================
+  // 라우팅
+  // =====================================================================
   const ROUTES = [
-    { id: 'contract', label: '계약 관리', sub: '계약 목록 · 변경이력 · 공고→계약 추적', render: renderContract },
+    { id: 'contract', label: '계약 관리', sub: '계약 목록 · 변경이력 · 공고→계약 추적', render: renderContract, update: updateContract },
     { id: 'corp', label: '업체 확인', sub: '업체 정보 · 업종 · 공급물품 · 부정당제재 확인', render: renderCorp },
     { id: 'similar', label: '유사사업 찾기', sub: '다른 기관의 비슷한 사업 · 문서 · 금액 참고', render: renderSimilar },
-    { id: 'notice', label: '공고 준비 · 확인', sub: '우리 기관 공고 · 입찰조건 · 정정이력', render: renderNotice },
-    { id: 'law', label: '법령 · 해석 찾기', sub: '조달청 법령해석 검색과 본문 보기', render: renderLaw },
-    { id: 'saved', label: '내 보관함', sub: '저장한 계약 · 공고 · 업체 · 해석과 메모', render: renderSaved },
+    { id: 'notice', label: '공고 준비 · 확인', sub: '우리 기관 공고 · 입찰조건 · 정정이력', render: renderNotice, update: updateNotice },
+    { id: 'law', label: '법령 · 해석 찾기', sub: '조달청 법령해석 · 업종별 근거법규', render: renderLaw, update: updateLaw },
+    { id: 'saved', label: '내 보관함', sub: '저장한 계약 · 공고 · 업체 · 해석 · 업종과 메모', render: renderSaved },
     { id: 'settings', label: '설정', sub: '우리 기관 · 주요 업무', render: renderSettings },
   ];
 
   function route() {
-    const raw = location.hash.replace(/^#/, '');
-    const [id, ...rest] = raw.split('/');
+    const { id, arg, params } = parseHash();
     const r = ROUTES.find((x) => x.id === id) || ROUTES[0];
-    let arg = '';
-    try { arg = decodeURIComponent(rest.join('/')); } catch (e) { arg = rest.join('/'); }
-    $('#nav').innerHTML = ROUTES.map((x) => `<a href="#${x.id}" ${x.id === r.id ? 'aria-current="page"' : ''}><span class="dot" aria-hidden="true"></span><span>${x.label}</span></a>`).join('');
-    $('#ptitle').textContent = r.label;
-    $('#psub').textContent = r.sub;
-    document.title = `${r.label} · 충청남도교육청 계약 업무 도우미`;
-    r.render($('#view'), arg);
-    window.scrollTo(0, 0);
+    const view = $('#view');
+    // 같은 메뉴·같은 검색어 안에서 상세만 바뀐 경우 → 화면을 다시 그리지 않고 상세만 갱신
+    const sameScreen = current.id === r.id && current.arg === arg && r.update;
+    current = { id: r.id, arg, hash: location.hash };
+    if (!(sameScreen && r.update(params))) {
+      $('#nav').innerHTML = ROUTES.map((x) => `<a href="#${x.id}" ${x.id === r.id ? 'aria-current="page"' : ''}><span class="dot" aria-hidden="true"></span><span>${x.label}</span></a>`).join('');
+      $('#ptitle').textContent = r.label;
+      $('#psub').textContent = r.sub;
+      document.title = `${r.label} · 충청남도교육청 계약 업무 도우미`;
+      r.render(view, arg, params);
+      const pos = savedScroll();
+      if (pos != null) requestAnimationFrame(() => window.scrollTo(0, pos)); else window.scrollTo(0, 0);
+    } else {
+      const pos = savedScroll();
+      if (pos != null) requestAnimationFrame(() => window.scrollTo(0, pos));
+    }
   }
 
   function globalSearch() {
     const q = $('#gq').value.trim();
     if (!q) return;
     const digits = q.replace(/[-\s]/g, '');
-    location.hash = /^\d{10}$/.test(digits) ? '#corp/' + digits : '#similar/' + encodeURIComponent(q);
     $('#gq').value = '';
     $('#gq').blur();
+    if (/^\d{10}$/.test(digits)) go('corp', digits); else go('similar', q);
   }
   $('#gsearch').addEventListener('submit', (e) => { e.preventDefault(); globalSearch(); });
   // 모바일 한글 입력 중 엔터가 submit으로 이어지지 않는 브라우저 대비
   $('#gq').addEventListener('keyup', (e) => { if ((e.key === 'Enter' || e.keyCode === 13) && !e.isComposing) { e.preventDefault(); globalSearch(); } });
+
+  if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
   window.addEventListener('hashchange', route);
+  if (!location.hash) history.replaceState(null, '', '#contract');
   route();
 })();

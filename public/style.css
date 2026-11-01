@@ -58,6 +58,10 @@ td .corpname{min-width:7em}
 .tabs{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px}
 .tab{min-height:40px;padding:0 16px;border-radius:8px;border:1px solid var(--field);background:#fff;cursor:pointer}
 .tab[aria-selected="true"]{background:var(--navy);border-color:var(--navy);color:#fff;font-weight:700}
+a.tab{display:inline-flex;align-items:center;text-decoration:none;color:var(--ink)}
+a.tab[aria-selected="true"],a.tab[aria-selected="true"]:hover{color:#fff}
+a.lawitem{text-decoration:none}
+a.linkbtn{display:inline-block}
 
 .tablewrap{overflow-x:auto}
 table{border-collapse:collapse;width:100%;min-width:640px;font-size:14px}

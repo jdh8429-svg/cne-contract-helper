@@ -35,7 +35,7 @@ function fixture(urlStr) {
   if (op.startsWith('getCntrctInfoList')) return wrap([
     { untyCntrctNo: '2026090000001', cntrctNm: '정보시스템 통합유지관리 용역', corpList: '[1^대표^단독^가나다정보통신(주)^홍길동^대한민국^100^가나다정보통신(주)^김담당^1234567890]', totCntrctAmt: '912000000', thtmCntrctAmt: '300000000', cntrctCnclsDate: '2026-09-15', cntrctCnclsMthdNm: '협상에의한계약', ntceNo: 'R26BK00000101000', cntrctInsttNm: '충청남도교육청', cntrctDtlInfoUrl: 'https://www.g2b.go.kr/x', chgDt: '2026-10-24 10:00:00', cntrctPrd: '2026-09-15~2027-09-14' },
     { untyCntrctNo: '2026100000002', cntrctNm: '학교 급식기구 구매', corpList: '[1^대표^공동^라마바(주)^이대표^대한민국^60^^^2223334445],[2^구성원^공동^사아자(주)^박대표^대한민국^40^^^5556667778]', totCntrctAmt: '48500000', cntrctCnclsDate: '2026-10-02', cntrctCnclsMthdNm: '수의계약', ntceNo: '' },
-  ], { totalCount: 45 });
+  ]);
   if (/PPSSrch$/.test(op) && op.startsWith('getBidPblancListInfo')) return wrap([
     { bidNtceNo: 'R26BK00000211', bidNtceOrd: '000', bidNtceNm: '정보시스템 통합유지관리 용역', ntceInsttNm: '충청남도교육청', dminsttNm: '충청남도교육청', bidNtceDt: '2026-10-10 10:00:00', bidClseDt: '2099-11-12 10:00:00', opengDt: '2099-11-12 11:00:00', cntrctCnclsMthdNm: '협상에의한계약', presmptPrce: '820000000', asignBdgtAmt: '902000000', ntceKindNm: '등록공고', ntceSpecFileNm1: '제안요청서.hwpx', ntceSpecDocUrl1: 'https://www.g2b.go.kr/d1', ntceSpecFileNm2: '과업지시서.hwp', ntceSpecDocUrl2: 'https://www.g2b.go.kr/d2', stdNtceDocUrl: 'https://www.g2b.go.kr/std', bidNtceDtlUrl: 'https://www.g2b.go.kr/n', techAbltEvlRt: '80', bidPrceEvlRt: '20' },
     { bidNtceNo: 'R26BK00000198', bidNtceOrd: '001', bidNtceNm: '청사 방수공사', ntceInsttNm: '충청남도교육청', bidNtceDt: '2026-10-01 09:00:00', bidClseDt: '2026-10-05 10:00:00', presmptPrce: '150000000', ntceKindNm: '변경공고', ntceSpecFileNm1: '시방서.pdf', ntceSpecDocUrl1: 'https://www.g2b.go.kr/d3' },
@@ -67,7 +67,7 @@ console.log('서버 함수');
 {
   const r = await call(g2b, 'http://x/api/g2b?svc=cntrct&op=getCntrctInfoListServcPPSSrch&inqryDiv=1&insttNm=충청남도교육청');
   const j = JSON.parse(r.text);
-  ok(j.ok && j.items.length === 2 && j.totalCount === 45, '계약 조회 정상 응답 정리');
+  ok(j.ok && j.items.length === 2 && j.totalCount === 2, '계약 조회 정상 응답 정리');
   ok(!r.text.includes(KEY) && !r.text.includes(encodeURIComponent(KEY)), '응답에 인증키 없음');
   const last = calls[calls.length - 1];
   ok(last.searchParams.get('ServiceKey') === KEY, '인증키가 올바르게 인코딩되어 전달됨');
@@ -145,7 +145,8 @@ if (chromium) {
     ok((await page.textContent('.brand')).includes('충청남도교육청 계약 업무 도우미'), `[${vp.name}] 제목`);
     await page.waitForSelector('#crecent table');
     ok(await page.locator('#crecent tbody tr').count() > 0, `[${vp.name}] 우리 기관 최근 계약 표시`);
-    await page.click('#clist button[data-i="0"]');
+    ok((await page.textContent('#clist button[data-i="0"]')).includes('급식기구'), `[${vp.name}] 계약 목록 최근순 정렬`);
+    await page.click('#clist button[data-i="1"]');
     await page.click('#dflow');
     await page.waitForSelector('#dsub .timeline');
     ok(await page.locator('#dsub .timeline li').count() >= 4, `[${vp.name}] 공고→계약 흐름`);
@@ -200,6 +201,9 @@ if (chromium) {
     await shot('6-saved');
 
     await page.click('#nav a[href="#settings"]');
+    await page.waitForSelector('#setform');
+    ok(await page.locator('#health').count() === 0, `[${vp.name}] 설정 화면에 연결 상태 숨김`);
+    await page.goto(base + '/#settings/check');
     await page.waitForSelector('#health .badge');
     await page.click('#htest');
     await page.waitForFunction(() => document.querySelectorAll('#htestres .badge').length === 4);

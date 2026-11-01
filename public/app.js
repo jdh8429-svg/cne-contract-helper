@@ -55,6 +55,28 @@
     }
     return j;
   }
+  // 여러 페이지를 모두 받아오기 (정렬을 위해). max건까지만.
+  async function g2bAll(svc, op, params, opts) {
+    const per = (opts && opts.per) || 500;
+    const max = (opts && opts.max) || 2000;
+    const items = [];
+    let total = 0;
+    for (let page = 1; page <= 20; page++) {
+      const r = await g2b(svc, op, Object.assign({}, params, { numOfRows: per, pageNo: page }));
+      total = r.totalCount || total;
+      items.push(...r.items);
+      if (!r.items.length || items.length >= total || items.length >= max) break;
+    }
+    return { items: items.slice(0, max), totalCount: total, truncated: total > max };
+  }
+  const byDateDesc = (...keys) => (a, b) => {
+    for (const k of keys) {
+      const c = String(b[k] || '').localeCompare(String(a[k] || ''));
+      if (c) return c;
+    }
+    return 0;
+  };
+
   async function lawApi(mode, params) {
     const qs = new URLSearchParams(Object.assign({ mode }, clean(params || {})));
     let r;
@@ -177,11 +199,12 @@
     box.innerHTML = loading();
     C.err = null;
     try {
-      C.data = await g2b('cntrct', `getCntrctInfoList${BIZ[C.biz]}PPSSrch`, {
+      const r = await g2bAll('cntrct', `getCntrctInfoList${BIZ[C.biz]}PPSSrch`, {
         inqryDiv: 1, inqryBgnDate: ymd(C.from), inqryEndDate: ymd(C.to),
         insttDivCd: settings.insttDivCd, insttNm: settings.insttNm, cntrctNm: C.q, cntrctMthdCd: C.mthd,
-        numOfRows: 20, pageNo: C.page,
       });
+      r.items.sort(byDateDesc('cntrctCnclsDate', 'cntrctDate', 'rgstDt'));
+      C.data = r;
     } catch (e) { C.data = null; C.err = e.message; }
     drawContracts();
   }
@@ -191,11 +214,13 @@
     if (!box) return;
     if (C.err) { box.innerHTML = errBox(C.err); return; }
     if (!C.data) { box.innerHTML = loading(); return; }
-    const items = C.data.items;
-    if (!items.length) { box.innerHTML = empty('조건에 맞는 계약이 없습니다. 기간이나 기관명을 바꿔 보세요.'); return; }
-    const pages = Math.max(1, Math.ceil(C.data.totalCount / 20));
+    const all = C.data.items;
+    if (!all.length) { box.innerHTML = empty('조건에 맞는 계약이 없습니다. 기간이나 기관명을 바꿔 보세요.'); return; }
+    const pages = Math.max(1, Math.ceil(all.length / 20));
+    if (C.page > pages) C.page = pages;
+    const items = all.slice((C.page - 1) * 20, C.page * 20);
     box.innerHTML = `
-      <div class="small muted" style="margin-bottom:6px">총 ${C.data.totalCount.toLocaleString()}건</div>
+      <div class="small muted" style="margin-bottom:6px">총 ${C.data.totalCount.toLocaleString()}건 · 계약일 최근순${C.data.truncated ? ` (최근 ${all.length.toLocaleString()}건까지 표시 — 기간을 줄이면 전체를 볼 수 있습니다)` : ''}</div>
       <div class="tablewrap"><table>
         <thead><tr><th>계약명</th><th>업체</th><th class="nw">총계약금액</th><th>계약일</th><th>계약방법</th><th>바로가기</th></tr></thead>
         <tbody>${items.map((c, i) => {
@@ -214,8 +239,8 @@
         <button type="button" class="btn sm" id="cnext" ${C.page >= pages ? 'disabled' : ''}>다음</button>
       </div>`;
     $$('button[data-i]', box).forEach((b) => b.addEventListener('click', () => { C.sel = items[Number(b.dataset.i)]; drawContracts(); drawDetail(C.sel); $('#cdetail').scrollIntoView({ behavior: 'smooth', block: 'start' }); }));
-    $('#cprev').addEventListener('click', () => { C.page--; searchContracts(); });
-    $('#cnext').addEventListener('click', () => { C.page++; searchContracts(); });
+    $('#cprev').addEventListener('click', () => { C.page--; drawContracts(); $('#clist').scrollIntoView({ block: 'start' }); });
+    $('#cnext').addEventListener('click', () => { C.page++; drawContracts(); $('#clist').scrollIntoView({ block: 'start' }); });
   }
 
   function lawKeywordFor(method) {
@@ -312,13 +337,13 @@
     C.recentErr = null;
     const bizs = (settings.bizs && settings.bizs.length ? settings.bizs : ['용역', '물품', '공사']).slice(0, 4);
     const from = iso(addDays(today(), -30)), to = iso(today());
-    const res = await Promise.allSettled(bizs.map((b) => g2b('cntrct', `getCntrctInfoList${BIZ[b]}PPSSrch`, {
-      inqryDiv: 1, inqryBgnDate: ymd(from), inqryEndDate: ymd(to), insttDivCd: settings.insttDivCd, insttNm: settings.insttNm, numOfRows: 10, pageNo: 1,
+    const res = await Promise.allSettled(bizs.map((b) => g2bAll('cntrct', `getCntrctInfoList${BIZ[b]}PPSSrch`, {
+      inqryDiv: 1, inqryBgnDate: ymd(from), inqryEndDate: ymd(to), insttDivCd: settings.insttDivCd, insttNm: settings.insttNm,
     }).then((r) => r.items.map((x) => Object.assign({ _biz: b }, x)))));
     const items = [];
     const errs = [];
     res.forEach((r) => (r.status === 'fulfilled' ? items.push(...r.value) : errs.push(r.reason.message)));
-    items.sort((a, b) => String(b.cntrctCnclsDate).localeCompare(String(a.cntrctCnclsDate)));
+    items.sort(byDateDesc('cntrctCnclsDate', 'cntrctDate', 'rgstDt'));
     C.recent = items.slice(0, 10);
     C.recentErr = errs.length && !items.length ? errs[0] : null;
     drawRecent();
@@ -472,9 +497,9 @@
     const to = iso(today());
     const from = iso(addDays(today(), -Math.round(Number(S.months) * 30.4)));
     const chunks = monthChunks(from, to);
-    const res = await Promise.allSettled(chunks.map((ch) => g2b('bid', `getBidPblancListInfo${BIZ[S.biz]}PPSSrch`, {
-      inqryDiv: 1, inqryBgnDt: ch.bgn, inqryEndDt: ch.end, bidNtceNm: S.q, numOfRows: 100, pageNo: 1,
-    })));
+    const res = await Promise.allSettled(chunks.map((ch) => g2bAll('bid', `getBidPblancListInfo${BIZ[S.biz]}PPSSrch`, {
+      inqryDiv: 1, inqryBgnDt: ch.bgn, inqryEndDt: ch.end, bidNtceNm: S.q,
+    }, { per: 300, max: 300 })));
     const map = new Map();
     const errs = [];
     res.forEach((r) => {
@@ -588,7 +613,7 @@
     const instKey = settings.insttDivCd === '2' ? 'dminsttNm' : 'ntceInsttNm';
     const jobs = [];
     settings.bizs.forEach((b) => chunks.forEach((ch) => jobs.push(
-      g2b('bid', `getBidPblancListInfo${BIZ[b]}PPSSrch`, { inqryDiv: 1, inqryBgnDt: ch.bgn, inqryEndDt: ch.end, [instKey]: settings.insttNm, bidNtceNm: N.q, numOfRows: 100 })
+      g2bAll('bid', `getBidPblancListInfo${BIZ[b]}PPSSrch`, { inqryDiv: 1, inqryBgnDt: ch.bgn, inqryEndDt: ch.end, [instKey]: settings.insttNm, bidNtceNm: N.q }, { max: 1000 })
         .then((r) => r.items.map((x) => Object.assign({ _biz: b }, x))))));
     const res = await Promise.allSettled(jobs);
     const map = new Map();
@@ -843,7 +868,8 @@
   }
 
   // ---------- 7. 설정 ----------
-  function renderSettings(view) {
+  function renderSettings(view, arg) {
+    const admin = arg === 'check'; // 관리자 점검용: 주소 끝에 #settings/check 를 붙이면 연결 상태가 보임
     view.innerHTML = `
       <div class="row">
         <section class="card">
@@ -861,13 +887,13 @@
             <div class="btns"><button class="btn primary" type="submit">저장</button><button class="btn" type="button" id="setreset">기본값으로</button></div>
           </form>
         </section>
-        <section class="card">
+        ${admin ? `<section class="card">
           <h2>데이터 연결 상태</h2>
           <div id="health">${loading()}</div>
           <div class="btns" style="margin-top:12px"><button type="button" class="btn" id="htest">실제 조회로 연결 테스트</button></div>
           <div id="htestres" style="margin-top:10px"></div>
           <p class="small muted" style="margin:12px 0 0">인증키는 이 화면이나 브라우저에 저장되지 않고, Cloudflare 환경변수에만 있습니다.</p>
-        </section>
+        </section>` : ''}
       </div>`;
     $('#setform').addEventListener('submit', (e) => {
       e.preventDefault();
@@ -878,7 +904,8 @@
       C.data = null; C.recent = null; N.items = null;
       toast('설정을 저장했습니다.');
     });
-    $('#setreset').addEventListener('click', () => { settings = Object.assign({}, DEFAULTS, { bizs: DEFAULTS.bizs.slice() }); store.set('cne.settings', settings); C.data = null; C.recent = null; N.items = null; renderSettings(view); toast('기본값으로 되돌렸습니다.'); });
+    $('#setreset').addEventListener('click', () => { settings = Object.assign({}, DEFAULTS, { bizs: DEFAULTS.bizs.slice() }); store.set('cne.settings', settings); C.data = null; C.recent = null; N.items = null; renderSettings(view, arg); toast('기본값으로 되돌렸습니다.'); });
+    if (!admin) return;
     fetch('/api/health').then((r) => r.json()).then((h) => {
       const row = (name, src, ok) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;background:var(--soft);border-radius:8px;margin-bottom:8px"><div><div>${name}</div><div class="small muted">${src}</div></div><span class="badge ${ok ? 'grn' : 'red'}">${ok ? '키 설정됨' : '키 없음'}</span></div>`;
       $('#health').innerHTML = row('나라장터 입찰공고 · 계약 · 사용자정보', '공공데이터포털 인증키 (G2B_SERVICE_KEY)', h.g2b) + row('조달청 법령해석 목록 · 본문', '법제처 OC (LAW_OC)', h.law);
@@ -906,7 +933,7 @@
     { id: 'notice', label: '공고 준비 · 확인', sub: '우리 기관 공고 · 입찰조건 · 정정이력', render: renderNotice },
     { id: 'law', label: '법령 · 해석 찾기', sub: '조달청 법령해석 검색과 본문 보기', render: renderLaw },
     { id: 'saved', label: '내 보관함', sub: '저장한 계약 · 공고 · 업체 · 해석과 메모', render: renderSaved },
-    { id: 'settings', label: '설정', sub: '우리 기관 · 주요 업무 · 데이터 연결 상태', render: renderSettings },
+    { id: 'settings', label: '설정', sub: '우리 기관 · 주요 업무', render: renderSettings },
   ];
 
   function route() {

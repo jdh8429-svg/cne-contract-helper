@@ -85,7 +85,7 @@ console.log('서버 함수');
   ok(r.status === 400, '허용되지 않은 오퍼레이션 차단');
   const r2 = await call(g2b, 'http://x/api/g2b?svc=usr&op=getUnptRsttCorpInfo02&ServiceKey=hack&inqryDiv=1&bizno=1', ENV);
   ok(calls[calls.length - 1].searchParams.getAll('ServiceKey').length === 1 && calls[calls.length - 1].searchParams.get('ServiceKey') === KEY, '사용자가 넣은 ServiceKey 무시');
-  ok(JSON.parse(r2.text).code === '03', '결과없음(03) 코드 전달');
+  { const j2 = JSON.parse(r2.text); ok(j2.ok && j2.items.length === 0, '결과없음(03)은 빈 정상 결과로(캐시 가능)'); }
   const r3 = await call(g2b, 'http://x/api/g2b?svc=bid&op=getBidPblancListInfoServc', {});
   ok(r3.status === 500 && JSON.parse(r3.text).code === 'NOKEY', '키 미설정 시 안내');
 }
@@ -146,8 +146,20 @@ if (chromium) {
     await page.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
     const shot = (n) => page.screenshot({ path: path.join(shots, `${vp.name}-${n}.png`), fullPage: true });
 
+    calls.length = 0;
     await page.goto(base + '/');
     await page.waitForSelector('#clist table');
+    await page.waitForSelector('#crecent table');
+    {
+      const n = (op) => calls.filter((u) => u.pathname.endsWith(op)).length;
+      ok(n('getCntrctInfoListServcPPSSrch') === 1, `[${vp.name}] 첫 화면: 같은 용역 계약 조회가 한 번만 호출됨 (${n('getCntrctInfoListServcPPSSrch')}회)`);
+      ok(calls.length === 3, `[${vp.name}] 첫 화면 전체 API 호출 ${calls.length}회 (용역·물품·공사 각 1회)`);
+      calls.length = 0;
+      await page.click('#nav a[href="#corp"]');
+      await page.click('#nav a[href="#contract"]');
+      await page.waitForSelector('#clist table');
+      ok(calls.length === 0, `[${vp.name}] 메뉴를 오가도 다시 호출하지 않음 (${calls.length}회)`);
+    }
     ok(await page.locator('#nav a').count() === 7, `[${vp.name}] 메뉴 7개`);
     ok((await page.textContent('.brand')).includes('충청남도교육청 계약 업무 도우미'), `[${vp.name}] 제목`);
     await page.waitForSelector('#crecent table');

@@ -83,6 +83,8 @@ export function normalize(text) {
   const resp = data.response || data;
   const header = (resp && resp.header) || findHeader(data) || {};
   const code = String(header.resultCode ?? header.code ?? '00');
+  // '03'(결과 없음)은 정상 결과로 취급 → 캐시되어 같은 조회를 반복 호출하지 않음 (예: 제재 이력 없는 업체)
+  if (code === '03') return { ok: true, totalCount: 0, pageNo: 1, numOfRows: 0, items: [] };
   if (code !== '00') {
     return { ok: false, code, msg: CODE_HINTS[code] || header.resultMsg || header.msg || '오류가 발생했습니다.', raw: header.resultMsg || header.msg };
   }

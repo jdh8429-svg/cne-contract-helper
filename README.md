@@ -23,7 +23,7 @@ Cloudflare Pages(무료)에서 동작하며, 인증키는 Cloudflare 환경변�
 ```
 public/            화면 (index.html, style.css, app.js)
 functions/api/     Cloudflare Pages Functions (서버)
-  g2b.js           나라장터 API 프록시 – 허용된 오퍼레이션만 호출, 10분 캐시
+  g2b.js           나라장터 API 프록시 – 허용된 오퍼레이션만 호출, 10분 캐시(업종 6시간, 결과 없음도 캐시)
   law.js           법제처 API 프록시 – OC 값 숨김, 30분 캐시
   health.js        인증키 설정 여부 확인 (값은 내보내지 않음)
 test/              로컬 테스트

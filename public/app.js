@@ -33,13 +33,24 @@
     return 0;
   };
 
-  // 조회기간을 최대 1개월 단위로 나눔 (나라장터 일부 API 제한)
+  const addMonths = (d, n) => {
+    const x = new Date(d);
+    const day = x.getDate();
+    x.setDate(1);
+    x.setMonth(x.getMonth() + n);
+    x.setDate(Math.min(day, new Date(x.getFullYear(), x.getMonth() + 1, 0).getDate()));
+    return x;
+  };
+  // 오늘 기준 최근 n개월 시작일 (예: 11/2 → 10/3) — 1개월 조회가 한 번의 호출로 끝나도록
+  const monthsAgo = (n) => iso(addDays(addMonths(today(), -n), 1));
+
+  // 조회기간을 1개월(달력 기준) 단위로 나눔 (나라장터 일부 API 제한: 최대 1개월)
   function monthChunks(fromIso, toIso) {
     const out = [];
     let s = new Date(fromIso + 'T00:00:00');
     const end = new Date(toIso + 'T00:00:00');
     while (s <= end) {
-      let e = addDays(s, 29);
+      let e = addDays(addMonths(s, 1), -1);
       if (e > end) e = end;
       out.push({ bgn: ymd(iso(s)) + '0000', end: ymd(iso(e)) + '2359' });
       s = addDays(e, 1);
@@ -48,33 +59,49 @@
   }
 
   // ---------- API ----------
-  async function g2b(svc, op, params) {
-    const qs = new URLSearchParams(Object.assign({ svc, op }, clean(params || {})));
-    let r;
-    try { r = await fetch('/api/g2b?' + qs.toString()); } catch (e) { throw new Error('네트워크 연결을 확인하세요.'); }
-    let j;
-    try { j = await r.json(); } catch (e) { throw new Error('서버 응답을 읽지 못했습니다. (' + r.status + ')'); }
-    if (!j.ok) {
-      if (j.code === '03') return { ok: true, items: [], totalCount: 0 };
-      const err = new Error(j.msg || '조회 중 오류가 발생했습니다.');
-      err.code = j.code;
-      throw err;
-    }
-    return j;
+  // 같은 조회는 브라우저에서도 잠시 기억해 다시 호출하지 않음 (동시에 같은 조회가 나가면 하나로 합침)
+  const memo = new Map();
+  const MEMO_MS = { ind: 6 * 3600e3, law: 30 * 60e3, default: 10 * 60e3 };
+  function remember(key, ttl, fn) {
+    const hit = memo.get(key);
+    if (hit && Date.now() - hit.t < ttl) return hit.p;
+    const p = fn().catch((e) => { memo.delete(key); throw e; });
+    memo.set(key, { t: Date.now(), p });
+    if (memo.size > 400) memo.delete(memo.keys().next().value);
+    return p;
   }
-  // 여러 페이지를 모두 받아오기 (정렬을 위해). max건까지만.
+  async function getJson(url) {
+    let r;
+    try { r = await fetch(url); } catch (e) { throw new Error('네트워크 연결을 확인하세요.'); }
+    try { return await r.json(); } catch (e) { throw new Error('서버 응답을 읽지 못했습니다. (' + r.status + ')'); }
+  }
+  function g2b(svc, op, params) {
+    const qs = new URLSearchParams(Object.assign({ svc, op }, clean(params || {}))).toString();
+    return remember('g2b?' + qs, MEMO_MS[svc] || MEMO_MS.default, async () => {
+      const j = await getJson('/api/g2b?' + qs);
+      if (!j.ok) {
+        if (j.code === '03') return { ok: true, items: [], totalCount: 0 };
+        const err = new Error(j.msg || '조회 중 오류가 발생했습니다.');
+        err.code = j.code;
+        throw err;
+      }
+      return j;
+    });
+  }
+  // 여러 페이지를 모두 받아오기 (정렬을 위해). 한 번에 최대한 많이(999건) 받아 호출 수를 줄임.
   async function g2bAll(svc, op, params, opts) {
-    let per = (opts && opts.per) || 500;
+    const sizes = [(opts && opts.per) || 999, 500, 100].filter((v, i, a) => a.indexOf(v) === i && v <= ((opts && opts.per) || 999));
     const max = (opts && opts.max) || 2000;
+    let si = 0;
     const items = [];
     let total = 0;
     for (let page = 1; page <= 30; page++) {
       let r;
       try {
-        r = await g2b(svc, op, Object.assign({}, params, { numOfRows: per, pageNo: page }));
+        r = await g2b(svc, op, Object.assign({}, params, { numOfRows: sizes[si], pageNo: page }));
       } catch (e) {
-        // 한 번에 받을 수 있는 건수를 넘었다면 100건씩으로 다시 시도
-        if (e.code === '07' && per > 100 && page === 1) { per = 100; page = 0; continue; }
+        // 한 번에 받을 수 있는 건수를 넘었다면 더 작은 단위로 다시 시도
+        if (e.code === '07' && page === 1 && si < sizes.length - 1) { si++; page = 0; continue; }
         throw e;
       }
       total = r.totalCount || total;
@@ -83,14 +110,34 @@
     }
     return { items: items.slice(0, max), totalCount: total, truncated: total > max };
   }
-  async function lawApi(mode, params) {
-    const qs = new URLSearchParams(Object.assign({ mode }, clean(params || {})));
-    let r;
-    try { r = await fetch('/api/law?' + qs.toString()); } catch (e) { throw new Error('네트워크 연결을 확인하세요.'); }
-    let j;
-    try { j = await r.json(); } catch (e) { throw new Error('서버 응답을 읽지 못했습니다. (' + r.status + ')'); }
-    if (!j.ok) throw new Error(j.msg || '조회 중 오류가 발생했습니다.');
-    return j.data;
+  // 기간을 1개월씩 나눠 조회. 혹시 1개월도 넘는다고 거절되면 그 구간만 반으로 나눠 다시 조회.
+  async function g2bByMonth(svc, op, params, fromIso, toIso, opts) {
+    const run = async (bgn, end) => {
+      try {
+        return (await g2bAll(svc, op, Object.assign({}, params, { inqryBgnDt: bgn, inqryEndDt: end }), opts)).items;
+      } catch (e) {
+        const a = new Date(`${bgn.slice(0, 4)}-${bgn.slice(4, 6)}-${bgn.slice(6, 8)}T00:00:00`);
+        const b = new Date(`${end.slice(0, 4)}-${end.slice(4, 6)}-${end.slice(6, 8)}T00:00:00`);
+        if (e.code !== '07' || b - a < 2 * 864e5) throw e;
+        const mid = addDays(a, Math.floor((b - a) / 864e5 / 2));
+        const [x, y] = await Promise.all([run(bgn, ymd(iso(mid)) + '2359'), run(ymd(iso(addDays(mid, 1))) + '0000', end)]);
+        return x.concat(y);
+      }
+    };
+    const res = await Promise.allSettled(monthChunks(fromIso, toIso).map((ch) => run(ch.bgn, ch.end)));
+    const items = [];
+    const errs = [];
+    res.forEach((r) => (r.status === 'fulfilled' ? items.push(...r.value) : errs.push(r.reason.message)));
+    if (!items.length && errs.length) throw new Error(errs[0]);
+    return items;
+  }
+  function lawApi(mode, params) {
+    const qs = new URLSearchParams(Object.assign({ mode }, clean(params || {}))).toString();
+    return remember('law?' + qs, MEMO_MS.law, async () => {
+      const j = await getJson('/api/law?' + qs);
+      if (!j.ok) throw new Error(j.msg || '조회 중 오류가 발생했습니다.');
+      return j.data;
+    });
   }
 
   // ---------- 화면 조각 ----------
@@ -216,7 +263,7 @@
       I.all = cached.items;
       return Promise.resolve(I.all);
     }
-    I.promise = g2bAll('ind', 'getIndstrytyBaseLawrgltInfoList', { indstrytyUseYn: 'Y' }, { per: 500, max: 6000 })
+    I.promise = g2bAll('ind', 'getIndstrytyBaseLawrgltInfoList', { indstrytyUseYn: 'Y' }, { max: 6000 })
       .then((r) => {
         I.all = r.items.map(compactInd).sort((a, b) => a.cd.localeCompare(b.cd));
         I.err = null;
@@ -246,7 +293,7 @@
   // =====================================================================
   // 1. 계약 관리
   // =====================================================================
-  const C = { biz: '용역', from: iso(addDays(today(), -30)), to: iso(today()), mthd: '', q: '', page: 1, data: null, err: null, sel: null, want: null, recent: null, recentErr: null, seq: 0, rseq: 0 };
+  const C = { biz: '용역', from: monthsAgo(1), to: iso(today()), mthd: '', q: '', page: 1, data: null, err: null, sel: null, want: null, recent: null, recentErr: null, seq: 0, rseq: 0 };
 
   function renderContract(view, arg, params) {
     if (params.biz && BIZ[params.biz] && params.biz !== C.biz) { C.biz = params.biz; C.data = null; C.err = null; C.page = 1; }
@@ -451,7 +498,7 @@
     C.recentErr = null;
     const my = ++C.rseq;
     const bizs = (settings.bizs && settings.bizs.length ? settings.bizs : DEFAULTS.bizs).slice(0, 4);
-    const from = iso(addDays(today(), -30)), to = iso(today());
+    const from = monthsAgo(1), to = iso(today());
     const res = await Promise.allSettled(bizs.map((b) => g2bAll('cntrct', `getCntrctInfoList${BIZ[b]}PPSSrch`, {
       inqryDiv: 1, inqryBgnDate: ymd(from), inqryEndDate: ymd(to), insttDivCd: settings.insttDivCd, insttNm: settings.insttNm,
     }).then((r) => r.items.map((x) => Object.assign({ _biz: b }, x)))));
@@ -468,11 +515,11 @@
     const box = $('#crecent');
     if (!box) return;
     if (C.recentErr) { box.innerHTML = errBox(C.recentErr); return; }
-    if (!C.recent.length) { box.innerHTML = empty('최근 30일 계약이 없습니다.'); return; }
+    if (!C.recent.length) { box.innerHTML = empty('최근 1개월 계약이 없습니다.'); return; }
     box.innerHTML = `<div class="tablewrap"><table>
       <thead><tr><th>업무</th><th>계약명</th><th>업체</th><th class="nw">총계약금액</th><th>계약일</th><th>바로가기</th></tr></thead>
       <tbody>${C.recent.map((c) => { const p = parseCorpList(c.corpList)[0]; return `<tr><td class="nw">${esc(c._biz)}</td><td>${esc(c.cntrctNm)}</td><td><span class="corpname" style="display:inline-block">${esc(p ? p.name : '-')}</span></td><td class="num">${won(c.totCntrctAmt || c.thtmCntrctAmt)}</td><td class="nw">${esc(dateOnly(c.cntrctCnclsDate))}</td><td class="nw">${ext(c.cntrctDtlInfoUrl || c.cntrctInfoUrl)}</td></tr>`; }).join('')}</tbody>
-    </table></div><p class="small muted" style="margin:8px 0 0">최근 30일 · ${esc(settings.bizs.join(', '))} 업무 기준</p>`;
+    </table></div><p class="small muted" style="margin:8px 0 0">최근 1개월 · ${esc(settings.bizs.join(', '))} 업무 기준</p>`;
   }
 
   // =====================================================================
@@ -635,24 +682,20 @@
     $('#ssum').innerHTML = '';
     S.err = null;
     const my = ++S.seq;
-    const to = iso(today());
-    const from = iso(addDays(today(), -Math.round(Number(S.months) * 30.4)));
-    const chunks = monthChunks(from, to);
-    const res = await Promise.allSettled(chunks.map((ch) => g2bAll('bid', `getBidPblancListInfo${BIZ[S.biz]}PPSSrch`, {
-      inqryDiv: 1, inqryBgnDt: ch.bgn, inqryEndDt: ch.end, bidNtceNm: S.q, indstrytyCd: S.ind,
-    }, { per: 300, max: 300 })));
+    let found = [];
+    try {
+      // 공고명으로 서버에서 걸러 받으므로 결과가 적음 → 1개월당 보통 1번 호출
+      found = await g2bByMonth('bid', `getBidPblancListInfo${BIZ[S.biz]}PPSSrch`, { inqryDiv: 1, bidNtceNm: S.q, indstrytyCd: S.ind }, monthsAgo(Number(S.months)), iso(today()), { max: 500 });
+      S.err = null;
+    } catch (e) { S.err = e.message; }
     if (my !== S.seq) return;
     const map = new Map();
-    const errs = [];
-    res.forEach((r) => {
-      if (r.status !== 'fulfilled') { errs.push(r.reason.message); return; }
-      r.value.items.forEach((n) => {
-        const prev = map.get(n.bidNtceNo);
-        if (!prev || String(n.bidNtceOrd) > String(prev.bidNtceOrd)) map.set(n.bidNtceNo, n);
-      });
+    found.forEach((n) => {
+      const prev = map.get(n.bidNtceNo);
+      if (!prev || String(n.bidNtceOrd) > String(prev.bidNtceOrd)) map.set(n.bidNtceNo, n);
     });
     S.items = Array.from(map.values()).sort(byDateDesc('bidNtceDt'));
-    S.err = !S.items.length && errs.length ? errs[0] : null;
+    if (S.items.length) S.err = null;
     drawSimilar();
   }
 
@@ -724,7 +767,7 @@
   // =====================================================================
   // 4. 공고 준비 · 확인
   // =====================================================================
-  const N = { from: iso(addDays(today(), -30)), to: iso(today()), q: '', items: null, err: null, sel: null, want: null, seq: 0 };
+  const N = { from: monthsAgo(1), to: iso(today()), q: '', items: null, err: null, sel: null, want: null, seq: 0 };
 
   function renderNotice(view, arg, params) {
     N.want = params.n || null;
@@ -757,13 +800,10 @@
     box.innerHTML = loading();
     N.err = null;
     const my = ++N.seq;
-    const chunks = monthChunks(N.from, N.to);
     const instKey = settings.insttDivCd === '2' ? 'dminsttNm' : 'ntceInsttNm';
-    const jobs = [];
-    settings.bizs.forEach((b) => chunks.forEach((ch) => jobs.push(
-      g2bAll('bid', `getBidPblancListInfo${BIZ[b]}PPSSrch`, { inqryDiv: 1, inqryBgnDt: ch.bgn, inqryEndDt: ch.end, [instKey]: settings.insttNm, bidNtceNm: N.q }, { max: 1000 })
-        .then((r) => r.items.map((x) => Object.assign({ _biz: b }, x))))));
-    const res = await Promise.allSettled(jobs);
+    const res = await Promise.allSettled(settings.bizs.map((b) =>
+      g2bByMonth('bid', `getBidPblancListInfo${BIZ[b]}PPSSrch`, { inqryDiv: 1, [instKey]: settings.insttNm, bidNtceNm: N.q }, N.from, N.to, { max: 1000 })
+        .then((items) => items.map((x) => Object.assign({ _biz: b }, x)))));
     if (my !== N.seq) return;
     const map = new Map();
     const errs = [];

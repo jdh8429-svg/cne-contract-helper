@@ -44,7 +44,7 @@ test/              로컬 테스트
    | `G2B_SERVICE_KEY` | 공공데이터포털 인증키 (Decoding 키 권장, Encoding 키도 동작) |
    | `LAW_OC` | 법제처 Open API OC 값 (아이디) |
 
-5. **Save and Deploy** → 배포가 끝나면 `https://<프로젝트명>.pages.dev` 주소가 생깁니다.
+5. **Save and Deploy** → 배포가 끝나면 `https://<프로젝트명>.pages.dev` 주소가 생깁니다. (현재 운영 주소: https://cnecontract.pages.dev)
 6. 사이트의 **설정 → 실제 조회로 연결 테스트**로 4개 API가 모두 '정상'인지 확인합니다.
 
 > 배포 후 환경변수를 바꿨다면 **Deployments → 최신 배포 → Retry deployment** 를 눌러야 반영됩니다.

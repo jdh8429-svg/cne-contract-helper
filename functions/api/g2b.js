@@ -126,39 +126,58 @@ export async function onRequestGet(context) {
   const target = `${BASES[svc]}/${op}?ServiceKey=${encKey}&${qs.join('&')}`;
 
   // 캐시 (키를 제외한 우리 요청 주소 기준)
+  // 나라장터 검색 API는 한 번에 7~20초가 걸리므로, 받아 둔 결과를 하루 동안 보관하고
+  // 10분(업종 6시간)이 지난 결과는 일단 바로 돌려준 뒤 뒤에서 새로 받아 둠 (stale-while-revalidate)
   const cache = typeof caches !== 'undefined' ? caches.default : null;
   const cacheKey = new Request(url.toString(), { method: 'GET' });
-  if (cache) {
-    const hit = await cache.match(cacheKey);
-    if (hit) return hit;
-  }
+  const fresh = CACHE_SECONDS[svc] || 600;
+  const KEEP = 86400;
 
   const get = async (u) => {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 20000);
+    const timer = setTimeout(() => ctrl.abort(), 45000);
     try {
       const r = await fetch(u, { signal: ctrl.signal, headers: { accept: 'application/json, application/xml, */*', 'user-agent': 'Mozilla/5.0 (compatible; cne-contract-helper)' } });
       return { status: r.status, text: await r.text() };
     } finally { clearTimeout(timer); }
   };
-  let resp;
-  try {
-    resp = await get(target);
-    // https에서 HTML 오류 페이지가 오면 문서에 적힌 http 주소로 한 번 더 시도
-    if (/<html/i.test(resp.text)) {
-      const alt = await get(target.replace(/^https:/, 'http:')).catch(() => null);
-      if (alt && !/<html/i.test(alt.text)) resp = alt;
+  // 나라장터에서 새로 받아 정리하고, 정상이면 캐시에 저장
+  const refresh = async () => {
+    let resp;
+    try {
+      resp = await get(target);
+      // https에서 HTML 오류 페이지가 오면 문서에 적힌 http 주소로 한 번 더 시도
+      if (/<html/i.test(resp.text)) {
+        const alt = await get(target.replace(/^https:/, 'http:')).catch(() => null);
+        if (alt && !/<html/i.test(alt.text)) resp = alt;
+      }
+    } catch (e) {
+      return { ok: false, code: 'NETWORK', msg: '나라장터 API 서버가 응답하지 않습니다. 잠시 후 다시 시도하세요.' };
     }
-  } catch (e) {
-    return json({ ok: false, code: 'NETWORK', msg: '나라장터 API 서버에 연결하지 못했습니다. 잠시 후 다시 시도하세요.' }, 502);
+    const result = normalize(resp.text);
+    if (!result.ok && result.code === 'HTML') result.msg += ` (HTTP ${resp.status})`;
+    if (result.ok && cache) {
+      const stored = json(result, 200, { 'cache-control': `public, max-age=${KEEP}`, 'x-fetched-at': String(Date.now()) });
+      await cache.put(cacheKey, stored);
+    }
+    return result;
+  };
+
+  if (cache) {
+    const hit = await cache.match(cacheKey);
+    if (hit) {
+      const age = (Date.now() - Number(hit.headers.get('x-fetched-at') || 0)) / 1000;
+      const body = await hit.text();
+      if (age < fresh) {
+        return new Response(body, { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'private, max-age=60', 'x-cache': 'fresh' } });
+      }
+      // 오래된 결과: 바로 돌려주고 뒤에서 새로 받아 둠 → 화면은 기다리지 않음
+      context.waitUntil?.(refresh().catch(() => {}));
+      return new Response(body, { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-cache': 'stale', 'x-age': String(Math.round(age)) } });
+    }
   }
 
-  const result = normalize(resp.text);
-  if (!result.ok && result.code === 'HTML') result.msg += ` (HTTP ${resp.status})`;
-  if (result.ok) {
-    const res = json(result, 200, { 'cache-control': `public, max-age=${CACHE_SECONDS[svc] || 600}` });
-    if (cache) context.waitUntil?.(cache.put(cacheKey, res.clone()));
-    return res;
-  }
-  return json(result, 200);
+  const result = await refresh();
+  if (result.ok) return json(result, 200, { 'cache-control': 'private, max-age=60', 'x-cache': 'miss' });
+  return json(result, result.code === 'NETWORK' ? 502 : 200);
 }

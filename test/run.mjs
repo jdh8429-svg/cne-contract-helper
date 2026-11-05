@@ -32,6 +32,9 @@ function fixture(urlStr) {
   const op = u.pathname.split('/').pop();
   const wrap = (items, extra = {}) => JSON.stringify({ response: { header: { resultCode: '00', resultMsg: '정상' }, body: Object.assign({ items, numOfRows: 20, pageNo: 1, totalCount: items.length }, extra) } });
   if (op.startsWith('getCntrctInfoList') && op.endsWith('ChgHstry')) return wrap([{ chgDt: '2026-10-24 10:00:00', totCntrctAmt: '950000000', thtmCntrctAmt: '300000000', cntrctPrd: '2026-09-15~2027-09-14', ttalScmpltDate: '2027-09-14' }]);
+  if (op === 'getCntrctInfoListCnstwkPPSSrch') return wrap([
+    { untyCntrctNo: 'C2026110000001', cnstwkNm: '○○초 교사동 외부 도장 공사', corpList: '[1^대표^단독^우승기업(주)^김대표^대한민국^100^^^1112223334]', totCntrctAmt: '2145000', cntrctCnclsDate: '2026-11-05', cntrctCnclsMthdNm: '수의계약', cbgnDate: '2026-11-06', ttalCcmpltDate: '2026-12-20' },
+  ]);
   if (op.startsWith('getCntrctInfoList')) return wrap([
     { untyCntrctNo: '2026090000001', cntrctNm: '정보시스템 통합유지관리 용역', corpList: '[1^대표^단독^가나다정보통신(주)^홍길동^대한민국^100^가나다정보통신(주)^김담당^1234567890]', totCntrctAmt: '912000000', thtmCntrctAmt: '300000000', cntrctCnclsDate: '2026-09-15', cntrctCnclsMthdNm: '협상에의한계약', ntceNo: 'R26BK00000101000', cntrctInsttNm: '충청남도교육청', cntrctDtlInfoUrl: 'https://www.g2b.go.kr/x', chgDt: '2026-10-24 10:00:00', cntrctPrd: '2026-09-15~2027-09-14' },
     { untyCntrctNo: '2026100000002', cntrctNm: '학교 급식기구 구매', corpList: '[1^대표^공동^라마바(주)^이대표^대한민국^60^^^2223334445],[2^구성원^공동^사아자(주)^박대표^대한민국^40^^^5556667778]', totCntrctAmt: '48500000', cntrctCnclsDate: '2026-10-02', cntrctCnclsMthdNm: '수의계약', ntceNo: '' },
@@ -112,6 +115,28 @@ console.log('서버 함수');
   ok(r.text === '{"g2b":true,"law":true}', 'health는 설정 여부만 반환');
 }
 
+{
+  // 서버 캐시: 오래된 결과는 바로 돌려주고 뒤에서 새로 받음
+  const store = new Map();
+  globalThis.caches = { default: { match: async (req) => { const r = store.get(req.url); return r ? r.clone() : undefined; }, put: async (req, res) => { store.set(req.url, res); } } };
+  const waits = [];
+  const ctx = (u) => ({ request: new Request(u), env: ENV, waitUntil: (p) => waits.push(p) });
+  const U = 'http://x/api/g2b?svc=cntrct&op=getCntrctInfoListServcPPSSrch&inqryDiv=1&insttNm=A';
+  const before = calls.length;
+  const r1 = await g2b.onRequestGet(ctx(U));
+  ok(r1.headers.get('x-cache') === 'miss' && calls.length === before + 1, '서버 캐시: 처음엔 나라장터 호출');
+  const r2 = await g2b.onRequestGet(ctx(U));
+  ok(r2.headers.get('x-cache') === 'fresh' && calls.length === before + 1, '서버 캐시: 10분 안에는 호출 없이 바로 응답');
+  // 11분 지난 것으로 만들기
+  const old = store.get(U); const body = await old.clone().text(); const h = new Headers(old.headers); h.set('x-fetched-at', String(Date.now() - 11 * 60e3));
+  store.set(U, new Response(body, { headers: h }));
+  const r3 = await g2b.onRequestGet(ctx(U));
+  ok(r3.headers.get('x-cache') === 'stale' && JSON.parse(await r3.text()).items.length === 2, '서버 캐시: 오래된 결과를 기다림 없이 바로 응답');
+  await Promise.all(waits);
+  ok(calls.length === before + 2 && Number(store.get(U).headers.get('x-fetched-at')) > Date.now() - 5000, '서버 캐시: 뒤에서 새로 받아 저장');
+  delete globalThis.caches;
+}
+
 // ---------- 2. 화면 ----------
 let chromium;
 try { chromium = createRequire(import.meta.url)('playwright').chromium; } catch (e) { console.log('\n(playwright 없음 – 화면 테스트 생략)'); }
@@ -181,6 +206,24 @@ if (chromium) {
     await page.waitForSelector('#dsub table');
     ok(true, `[${vp.name}] 계약 변경이력`);
     await shot('1-contract');
+    await page.click('.tab[data-biz="공사"]');
+    await page.waitForFunction(() => document.querySelector('.tab[aria-selected="true"]').textContent === '공사');
+    await page.waitForSelector('#clist a.linkbtn');
+    ok((await page.textContent('#clist a.linkbtn >> nth=0')).includes('외부 도장 공사'), `[${vp.name}] 공사 계약명(공사명) 표시`);
+    calls.length = 0;
+    await page.fill('#cform input[name="q"]', '도장');
+    await page.click('#cform button[type="submit"]');
+    await page.waitForFunction(() => !document.querySelector('#clist .loading'));
+    ok(calls.some((u) => u.pathname.endsWith('CnstwkPPSSrch') && u.searchParams.get('cnstwkNm') === '도장' && !u.searchParams.get('cntrctNm')), `[${vp.name}] 공사 검색은 공사명(cnstwkNm)으로 요청`);
+    await page.click('.tab[data-biz="용역"]');
+    await page.waitForFunction(() => document.querySelector('.tab[aria-selected="true"]').textContent === '용역');
+    await page.waitForSelector('#clist a.linkbtn');
+    // 저장된 목록이 바로 보이는지 (새로 고침 후)
+    await page.reload();
+    ok(await page.locator('#clist a.linkbtn').count() > 0, `[${vp.name}] 새로 열어도 저장된 목록이 바로 표시`);
+    await page.waitForFunction(() => !document.querySelector('#clist .loading'));
+    await page.click('#clist a.linkbtn >> nth=1');
+    await page.waitForSelector('#cdetail:not([hidden])');
 
     await page.click('#cdetail a[href^="#corp/"]');
     await page.waitForSelector('#kresult .banner');

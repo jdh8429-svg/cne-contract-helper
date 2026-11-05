@@ -73,11 +73,26 @@
   async function getJson(url) {
     let r;
     try { r = await fetch(url); } catch (e) { throw new Error('네트워크 연결을 확인하세요.'); }
-    try { return await r.json(); } catch (e) { throw new Error('서버 응답을 읽지 못했습니다. (' + r.status + ')'); }
+    let j;
+    try { j = await r.json(); } catch (e) { throw new Error('서버 응답을 읽지 못했습니다. (' + r.status + ')'); }
+    // 서버가 보관해 둔 '오래된' 결과를 먼저 준 경우 표시 (뒤에서 새로 받는 중)
+    if (j && typeof j === 'object') j._stale = r.headers.get('x-cache') === 'stale';
+    return j;
+  }
+  // 공사 계약은 이름·날짜 필드명이 달라서(cnstwkNm, cbgnDate, ttalCcmpltDate…) 다른 업무와 같은 이름으로 맞춤
+  function normalizeCntrct(x) {
+    if (!x || typeof x !== 'object') return x;
+    if (!x.cntrctNm && x.cnstwkNm) x.cntrctNm = x.cnstwkNm;
+    if (!x.wbgnDate && x.cbgnDate) x.wbgnDate = x.cbgnDate;
+    if (!x.ttalScmpltDate && x.ttalCcmpltDate) x.ttalScmpltDate = x.ttalCcmpltDate;
+    if (!x.thtmScmpltDate && x.thtmCcmpltDate) x.thtmScmpltDate = x.thtmCcmpltDate;
+    return x;
   }
   function g2b(svc, op, params) {
     const qs = new URLSearchParams(Object.assign({ svc, op }, clean(params || {}))).toString();
-    return remember('g2b?' + qs, MEMO_MS[svc] || MEMO_MS.default, async () => {
+    const key = 'g2b?' + qs;
+    const ttl = MEMO_MS[svc] || MEMO_MS.default;
+    return remember(key, ttl, async () => {
       const j = await getJson('/api/g2b?' + qs);
       if (!j.ok) {
         if (j.code === '03') return { ok: true, items: [], totalCount: 0 };
@@ -85,9 +100,33 @@
         err.code = j.code;
         throw err;
       }
+      if (svc === 'cntrct' && Array.isArray(j.items)) j.items.forEach(normalizeCntrct);
+      // 오래된 결과였다면 브라우저에는 20초만 기억 → 다음 조회 때 서버가 새로 받아 둔 결과를 가져옴
+      if (j._stale) setTimeout(() => { const h = memo.get(key); if (h) h.t = 0; }, 20000);
       return j;
     });
   }
+
+  // 마지막으로 본 목록을 브라우저에 하루 동안 보관 → 다음에 열 때 기다리지 않고 바로 보여 줌
+  const SNAP_FIELDS = ['untyCntrctNo', 'cntrctNm', 'corpList', 'totCntrctAmt', 'thtmCntrctAmt', 'cntrctCnclsDate', 'cntrctDate', 'rgstDt', 'chgDt',
+    'cntrctCnclsMthdNm', 'cntrctDtlInfoUrl', 'cntrctInfoUrl', 'ntceNo', 'cntrctInsttNm', 'cntrctInsttChrgDeptNm', 'cntrctPrd', 'wbgnDate',
+    'ttalScmpltDate', 'thtmScmpltDate', 'baseLawNm', 'cmmnCntrctYn', 'lngtrmCtnuDivNm', '_biz'];
+  const slim = (x) => { const o = {}; SNAP_FIELDS.forEach((k) => { if (x[k] != null && x[k] !== '') o[k] = x[k]; }); return o; };
+  const snap = {
+    get(k) { const v = store.get('cne.snap.' + k, null); return v && Date.now() - v.t < 86400e3 ? v : null; },
+    set(k, v) {
+      const idx = store.get('cne.snap.idx', []).filter((x) => x !== k);
+      idx.push(k);
+      while (idx.length > 8) { try { localStorage.removeItem('cne.snap.' + idx.shift()); } catch (e) { /* 무시 */ } }
+      if (!store.set('cne.snap.' + k, Object.assign({ t: Date.now() }, v))) {
+        // 저장 공간이 부족하면 오래된 것부터 지우고 한 번 더 시도
+        while (idx.length > 1) { try { localStorage.removeItem('cne.snap.' + idx.shift()); } catch (e) { /* 무시 */ } }
+        store.set('cne.snap.' + k, Object.assign({ t: Date.now() }, v));
+      }
+      store.set('cne.snap.idx', idx);
+    },
+  };
+  const agoText = (t) => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? '방금 전' : m < 60 ? `${m}분 전` : `${Math.round(m / 60)}시간 전`; };
   // 여러 페이지를 모두 받아오기 (정렬을 위해). 한 번에 최대한 많이(999건) 받아 호출 수를 줄임.
   async function g2bAll(svc, op, params, opts) {
     const sizes = [(opts && opts.per) || 999, 500, 100].filter((v, i, a) => a.indexOf(v) === i && v <= ((opts && opts.per) || 999));
@@ -95,6 +134,7 @@
     let si = 0;
     const items = [];
     let total = 0;
+    let stale = false;
     for (let page = 1; page <= 30; page++) {
       let r;
       try {
@@ -105,10 +145,11 @@
         throw e;
       }
       total = r.totalCount || total;
+      stale = stale || !!r._stale;
       items.push(...r.items);
       if (!r.items.length || items.length >= total || items.length >= max) break;
     }
-    return { items: items.slice(0, max), totalCount: total, truncated: total > max };
+    return { items: items.slice(0, max), totalCount: total, truncated: total > max, stale };
   }
   // 기간을 1개월씩 나눠 조회. 혹시 1개월도 넘는다고 거절되면 그 구간만 반으로 나눠 다시 조회.
   async function g2bByMonth(svc, op, params, fromIso, toIso, opts) {
@@ -342,21 +383,39 @@
     return true;
   }
 
-  async function searchContracts() {
+  async function searchContracts(opts) {
+    const silent = opts && opts.silent;
     const box = $('#clist');
     if (!box) return;
-    box.innerHTML = loading();
-    C.err = null;
+    const key = ['list', C.biz, C.from, C.to, C.mthd, C.q, settings.insttDivCd, settings.insttNm].join('|');
     const my = ++C.seq;
+    if (!silent) {
+      C.err = null;
+      C.snapErr = null;
+      const s = snap.get(key);
+      if (s) { C.data = { items: s.items, totalCount: s.total, truncated: s.trunc }; C.snapAt = s.t; applyContractSel(false); }
+      else { C.data = null; C.snapAt = null; box.innerHTML = loading('나라장터에서 계약 목록을 받는 중… (나라장터 응답이 느려 처음엔 10~20초 걸릴 수 있습니다)'); }
+    }
     try {
       const r = await g2bAll('cntrct', `getCntrctInfoList${BIZ[C.biz]}PPSSrch`, {
         inqryDiv: 1, inqryBgnDate: ymd(C.from), inqryEndDate: ymd(C.to),
-        insttDivCd: settings.insttDivCd, insttNm: settings.insttNm, cntrctNm: C.q, cntrctMthdCd: C.mthd,
+        insttDivCd: settings.insttDivCd, insttNm: settings.insttNm, cntrctMthdCd: C.mthd,
+        // 공사는 검색 항목 이름이 '공사명(cnstwkNm)'
+        [C.biz === '공사' ? 'cnstwkNm' : 'cntrctNm']: C.q,
       });
       if (my !== C.seq) return; // 더 최근 조회가 있으면 무시
       r.items.sort(byDateDesc('cntrctCnclsDate', 'cntrctDate', 'rgstDt'));
       C.data = r;
-    } catch (e) { if (my !== C.seq) return; C.data = null; C.err = e.message; }
+      C.snapAt = null;
+      C.snapErr = null;
+      C.err = null;
+      snap.set(key, { items: r.items.map(slim), total: r.totalCount, trunc: r.truncated });
+      // 서버가 오래된 결과를 먼저 줬다면, 잠시 뒤 새 결과로 조용히 바꿔 줌
+      if (r.stale && !silent) setTimeout(() => { if (my === C.seq && current.id === 'contract') searchContracts({ silent: true }); }, 21000);
+    } catch (e) {
+      if (my !== C.seq) return;
+      if (C.data && C.snapAt) { C.snapErr = e.message; } else { C.data = null; C.err = e.message; }
+    }
     applyContractSel(false);
   }
 
@@ -382,7 +441,7 @@
     if (C.page > pages) C.page = pages;
     const items = all.slice((C.page - 1) * 20, C.page * 20);
     box.innerHTML = `
-      <div class="small muted" style="margin-bottom:6px">총 ${C.data.totalCount.toLocaleString()}건 · 계약일 최근순${C.data.truncated ? ` (최근 ${all.length.toLocaleString()}건까지 표시 — 기간을 줄이면 전체를 볼 수 있습니다)` : ''}</div>
+      <div class="small muted" style="margin-bottom:6px">총 ${C.data.totalCount.toLocaleString()}건 · 계약일 최근순${C.data.truncated ? ` (최근 ${all.length.toLocaleString()}건까지 표시 — 기간을 줄이면 전체를 볼 수 있습니다)` : ''}${C.snapAt ? ` · <span class="badge org">${esc(agoText(C.snapAt))} 저장된 목록 · ${C.snapErr ? '최신 정보를 받지 못했습니다' : '최신 정보 확인 중…'}</span>` : ''}</div>
       <div class="tablewrap"><table>
         <thead><tr><th>계약명</th><th>업체</th><th class="nw">총계약금액</th><th>계약일</th><th>계약방법</th><th>바로가기</th></tr></thead>
         <tbody>${items.map((c) => {
@@ -491,25 +550,35 @@
     } catch (e) { sub.innerHTML = `<div class="sub">${errBox(e.message)}</div>`; }
   }
 
-  async function loadRecent() {
+  async function loadRecent(opts) {
+    const silent = opts && opts.silent;
     const box = $('#crecent');
     if (!box) return;
-    box.innerHTML = loading();
-    C.recentErr = null;
-    const my = ++C.rseq;
     const bizs = (settings.bizs && settings.bizs.length ? settings.bizs : DEFAULTS.bizs).slice(0, 4);
     const from = monthsAgo(1), to = iso(today());
+    const key = ['recent', bizs.join(','), from, to, settings.insttDivCd, settings.insttNm].join('|');
+    const my = ++C.rseq;
+    if (!silent) {
+      C.recentErr = null;
+      const s = snap.get(key);
+      if (s) { C.recent = s.items; C.recentAt = s.t; drawRecent(); } else { C.recentAt = null; box.innerHTML = loading(); }
+    }
     const res = await Promise.allSettled(bizs.map((b) => g2bAll('cntrct', `getCntrctInfoList${BIZ[b]}PPSSrch`, {
       inqryDiv: 1, inqryBgnDate: ymd(from), inqryEndDate: ymd(to), insttDivCd: settings.insttDivCd, insttNm: settings.insttNm,
-    }).then((r) => r.items.map((x) => Object.assign({ _biz: b }, x)))));
+    }).then((r) => ({ stale: r.stale, items: r.items.map((x) => Object.assign({ _biz: b }, x)) }))));
     if (my !== C.rseq) return;
     const items = [];
     const errs = [];
-    res.forEach((r) => (r.status === 'fulfilled' ? items.push(...r.value) : errs.push(r.reason.message)));
+    let stale = false;
+    res.forEach((r) => (r.status === 'fulfilled' ? (items.push(...r.value.items), stale = stale || r.value.stale) : errs.push(r.reason.message)));
+    if (!items.length && errs.length && C.recentAt) { drawRecent(); return; } // 저장된 목록은 그대로 둠
     items.sort(byDateDesc('cntrctCnclsDate', 'cntrctDate', 'rgstDt'));
     C.recent = items.slice(0, 10);
+    C.recentAt = null;
     C.recentErr = errs.length && !items.length ? errs[0] : null;
+    if (!C.recentErr) snap.set(key, { items: C.recent.map(slim) });
     drawRecent();
+    if (stale && !silent) setTimeout(() => { if (my === C.rseq && current.id === 'contract') loadRecent({ silent: true }); }, 21000);
   }
   function drawRecent() {
     const box = $('#crecent');
@@ -519,7 +588,7 @@
     box.innerHTML = `<div class="tablewrap"><table>
       <thead><tr><th>업무</th><th>계약명</th><th>업체</th><th class="nw">총계약금액</th><th>계약일</th><th>바로가기</th></tr></thead>
       <tbody>${C.recent.map((c) => { const p = parseCorpList(c.corpList)[0]; return `<tr><td class="nw">${esc(c._biz)}</td><td>${esc(c.cntrctNm)}</td><td><span class="corpname" style="display:inline-block">${esc(p ? p.name : '-')}</span></td><td class="num">${won(c.totCntrctAmt || c.thtmCntrctAmt)}</td><td class="nw">${esc(dateOnly(c.cntrctCnclsDate))}</td><td class="nw">${ext(c.cntrctDtlInfoUrl || c.cntrctInfoUrl)}</td></tr>`; }).join('')}</tbody>
-    </table></div><p class="small muted" style="margin:8px 0 0">최근 1개월 · ${esc(settings.bizs.join(', '))} 업무 기준</p>`;
+    </table></div><p class="small muted" style="margin:8px 0 0">최근 1개월 · ${esc(settings.bizs.join(', '))} 업무 기준${C.recentAt ? ` · ${esc(agoText(C.recentAt))} 저장된 목록 (최신 정보 확인 중…)` : ''}</p>`;
   }
 
   // =====================================================================

@@ -163,6 +163,15 @@ export async function onRequestGet(context) {
     return result;
   };
 
+  // 점검용: _raw=1 이면 나라장터 원본 응답 앞부분을 그대로 보여줌 (인증키는 지움, 캐시 안 함)
+  if (url.searchParams.get('_raw') === '1') {
+    const target2 = target.replace(/&_raw=1/, '');
+    let t = '';
+    try { t = (await get(target2)).text; } catch (e) { t = 'NETWORK ' + e.message; }
+    t = t.split(key).join('***').split(encKey).join('***');
+    return new Response(t.slice(0, 3000), { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store' } });
+  }
+
   if (cache) {
     const hit = await cache.match(cacheKey);
     if (hit) {

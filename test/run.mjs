@@ -30,6 +30,13 @@ function fixture(urlStr) {
     return JSON.stringify({ PpsCgmExpcService: { 법령해석일련번호: u.searchParams.get('ID'), 안건명: '협상에 의한 계약 평가 관련 질의', 안건번호: '조달청-25-0001', 해석일자: '20250930', 해석기관명: '조달청', 질의기관명: '충청남도교육청', 질의요지: '질의 내용 본문', 회답: '회답 본문', 이유: '이유 본문\n둘째 줄', 관련법령: '「국가를 당사자로 하는 계약에 관한 법률 시행령」 제43조' } });
   }
   const op = u.pathname.split('/').pop();
+  // 실제 나라장터처럼 검색(PPSSrch)은 한 번에 7일까지만 허용
+  if (/PPSSrch$/.test(op)) {
+    const b = u.searchParams.get('inqryBgnDate') || (u.searchParams.get('inqryBgnDt') || '').slice(0, 8);
+    const e = u.searchParams.get('inqryEndDate') || (u.searchParams.get('inqryEndDt') || '').slice(0, 8);
+    const d = (s) => new Date(`${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}T00:00:00`);
+    if (b && e && (d(e) - d(b)) / 864e5 + 1 > 7) return JSON.stringify({ 'nkoneps.com.response.ResponseError': { header: { resultCode: '07', resultMsg: '입력범위값 초과 에러' } } });
+  }
   const wrap = (items, extra = {}) => JSON.stringify({ response: { header: { resultCode: '00', resultMsg: '정상' }, body: Object.assign({ items, numOfRows: 20, pageNo: 1, totalCount: items.length }, extra) } });
   if (op.startsWith('getCntrctInfoList') && op.endsWith('ChgHstry')) return wrap([{ chgDt: '2026-10-24 10:00:00', totCntrctAmt: '950000000', thtmCntrctAmt: '300000000', cntrctPrd: '2026-09-15~2027-09-14', ttalScmpltDate: '2027-09-14' }]);
   if (op === 'getCntrctInfoListCnstwkPPSSrch') return wrap([
@@ -177,8 +184,11 @@ if (chromium) {
     await page.waitForSelector('#crecent table');
     {
       const n = (op) => calls.filter((u) => u.pathname.endsWith(op)).length;
-      ok(n('getCntrctInfoListServcPPSSrch') === 1, `[${vp.name}] 첫 화면: 같은 용역 계약 조회가 한 번만 호출됨 (${n('getCntrctInfoListServcPPSSrch')}회)`);
-      ok(calls.length === 3, `[${vp.name}] 첫 화면 전체 API 호출 ${calls.length}회 (용역·물품·공사 각 1회)`);
+      const now = new Date(); const from = new Date(now); from.setMonth(from.getMonth() - 1); from.setDate(from.getDate() + 1);
+      const chunks = Math.ceil((Math.round((now - from) / 864e5) + 1) / 7);
+      ok(n('getCntrctInfoListServcPPSSrch') === chunks, `[${vp.name}] 첫 화면: 용역 1개월을 7일씩 ${chunks}번, 최근 7일은 재사용 (${n('getCntrctInfoListServcPPSSrch')}회)`);
+      ok(calls.length === chunks + 2, `[${vp.name}] 첫 화면 전체 API 호출 ${calls.length}회 (용역 ${chunks} + 물품·공사 최근 7일 각 1)`);
+      ok(!(await page.locator('#clist .err').count()), `[${vp.name}] 7일 제한에 걸리지 않음`);
       calls.length = 0;
       await page.click('#nav a[href="#corp"]');
       await page.click('#nav a[href="#contract"]');
@@ -251,6 +261,19 @@ if (chromium) {
     await page.click('#slist button[data-act="cntrct"]');
     await page.waitForSelector('#ssub-0 table');
     ok(true, `[${vp.name}] e발주 문서 · 계약 결과`);
+    await page.selectOption('#sform select[name="preset"]', '3');
+    const f3 = await page.inputValue('#sform input[name="from"]');
+    { const d = new Date(); d.setMonth(d.getMonth() - 3); d.setDate(d.getDate() + 1); ok(f3 === d.toISOString().slice(0, 10) || Math.abs(new Date(f3) - d) < 2 * 864e5, `[${vp.name}] 기간 빠른 선택(3개월) → 시작일 ${f3}`); }
+    await page.fill('#sform input[name="from"]', '2025-01-01');
+    await page.fill('#sform input[name="to"]', '2025-12-31');
+    await page.click('#sform button[type="submit"]');
+    await page.waitForSelector('#slist .err');
+    ok((await page.textContent('#slist .err')).includes('최대 6개월'), `[${vp.name}] 6개월 넘는 기간은 안내 후 조회 안 함`);
+    await page.fill('#sform input[name="from"]', '2025-03-01');
+    await page.fill('#sform input[name="to"]', '2025-03-20');
+    await page.click('#sform button[type="submit"]');
+    await page.waitForSelector('#slist .result');
+    ok(await page.locator('#slist .result').count() === 2, `[${vp.name}] 과거 기간(2025년 3월) 직접 입력 조회`);
     await page.selectOption('#sform select[name="doc"]', '과업지시서');
     ok(await page.locator('#slist .result').count() === 1, `[${vp.name}] 문서 종류 필터`);
     await shot('3-similar');

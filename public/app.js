@@ -1081,7 +1081,7 @@
         st.cache.rank || (st.cache.rank = g2bAll('scsbid', 'getOpengResultListInfoOpengCompt', { bidNtceNo: n.bidNtceNo, bidNtceOrd: ord, bidClsfcNo: key.bidClsfcNo || '0', rbidNo: key.rbidNo || '000' }, { per: 100, max: 500 })),
         st.cache.pre || (st.cache.pre = g2b('scsbid', `getOpengResultListInfo${B}PreparPcDetail`, { inqryDiv: 2, bidNtceNo: n.bidNtceNo, bidNtceOrd: ord, numOfRows: 20 })),
       ]);
-      const ranks = rk.status === 'fulfilled' ? rk.value.items.slice().sort((a, b) => num(a.opengRank) - num(b.opengRank)) : [];
+      const ranks = rk.status === 'fulfilled' ? rk.value.items.slice().sort((a, b) => (num(a.opengRank) || 1e9) - (num(b.opengRank) || 1e9)) : [];
       const preps = pp.status === 'fulfilled' ? pp.value.items.slice().sort((a, b) => num(a.compnoRsrvtnPrceSno) - num(b.compnoRsrvtnPrceSno)) : [];
       const p0 = preps[0] || {};
       const nego = ranks.some((r) => r.totalEvlAmtVal || r.techEvlVal);

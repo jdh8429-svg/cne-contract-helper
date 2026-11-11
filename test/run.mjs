@@ -354,6 +354,29 @@ if (chromium) {
     await page.waitForFunction(() => document.querySelectorAll('#htestres .badge').length === 8);
     ok(await page.locator('#htestres .badge.grn').count() === 8, `[${vp.name}] 연결 테스트 8개 정상`);
     await shot('7-settings');
+    {
+      // 다른 메뉴에 갔다가 왼쪽 메뉴로 돌아와도 보던 내용이 그대로
+      await page.goto(base + '/#similar/' + encodeURIComponent('유지관리'));
+      await page.waitForSelector('#slist .result');
+      await page.click('#slist button[data-act="flow"]');
+      await page.waitForSelector('#ssub-0 .steps');
+      await page.click('#ssub-0 button[data-step="plan"]');
+      await page.click('#nav a[href="#contract"]');
+      await page.waitForSelector('#clist table');
+      await page.click('#view .tabs[aria-label="업무 구분"] button:nth-child(2)');
+      await page.waitForTimeout(300);
+      const cHash = await page.evaluate(() => location.hash);
+      await page.click('#nav a[href="#law"]');
+      await page.waitForSelector('#view h2, #view .card');
+      const before = calls.length;
+      await page.click('#nav a[href="#similar"]');
+      await page.waitForSelector('#ssub-0 .steps');
+      ok((await page.getAttribute('#ssub-0 button[data-step="plan"]', 'aria-selected')) === 'true' && (await page.inputValue('#sform [name=q]')) === '유지관리', `[${vp.name}] 메뉴 이동 후 돌아와도 검색 결과·열어 둔 단계 유지`);
+      await page.click('#nav a[href="#contract"]');
+      await page.waitForSelector('#clist table');
+      ok((await page.evaluate(() => location.hash)) === cHash, `[${vp.name}] 계약 관리도 보던 화면으로 복귀 (${decodeURIComponent(cHash)})`);
+      ok(calls.length - before <= 2, `[${vp.name}] 돌아올 때 다시 조회하지 않음 (추가 호출 ${calls.length - before}회)`);
+    }
 
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);
     ok(!overflow, `[${vp.name}] 가로 넘침 없음`);

@@ -282,6 +282,14 @@
   function replaceHash(id, arg, params) {
     const h = hashOf(id, arg, params);
     if (location.hash !== h) { history.replaceState(history.state, '', h); current.hash = h; }
+    rememberHash(id, h);
+  }
+  // 메뉴별 마지막 화면 주소 → 다른 메뉴에 갔다가 돌아와도 보던 화면(검색 결과·열어 둔 상세)이 그대로
+  const lastHash = (() => { try { return JSON.parse(sessionStorage.getItem('cne.last') || '{}'); } catch (e) { return {}; } })();
+  function rememberHash(id, h) {
+    if (!id || !h) return;
+    lastHash[id] = h;
+    try { sessionStorage.setItem('cne.last', JSON.stringify(lastHash)); } catch (e) { /* 저장 불가 시 무시 */ }
   }
   const scrollPos = {};
   let current = { id: null, arg: null, hash: null };
@@ -1642,6 +1650,7 @@
     // 같은 메뉴·같은 검색어 안에서 상세만 바뀐 경우 → 화면을 다시 그리지 않고 상세만 갱신
     const sameScreen = current.id === r.id && current.arg === arg && r.update;
     current = { id: r.id, arg, hash: location.hash };
+    if (id === r.id) rememberHash(r.id, location.hash);
     if (!(sameScreen && r.update(params))) {
       $('#nav').innerHTML = ROUTES.map((x) => `<a href="#${x.id}" ${x.id === r.id ? 'aria-current="page"' : ''}><span class="dot" aria-hidden="true"></span><span>${x.label}</span></a>`).join('');
       $('#ptitle').textContent = r.label;
@@ -1664,6 +1673,14 @@
     $('#gq').blur();
     if (/^\d{10}$/.test(digits)) go('corp', digits); else go('similar', q);
   }
+  // 왼쪽 메뉴를 누르면 그 메뉴에서 마지막으로 보던 화면으로 이동 (지금 메뉴를 다시 누르면 첫 화면)
+  $('#nav').addEventListener('click', (e) => {
+    const a = e.target.closest('a[href^="#"]');
+    if (!a || e.ctrlKey || e.metaKey || e.shiftKey) return;
+    const id = a.getAttribute('href').slice(1);
+    const h = lastHash[id];
+    if (id !== current.id && h && h !== '#' + id) { e.preventDefault(); location.hash = h; }
+  });
   $('#gsearch').addEventListener('submit', (e) => { e.preventDefault(); globalSearch(); });
   // 모바일 한글 입력 중 엔터가 submit으로 이어지지 않는 브라우저 대비
   $('#gq').addEventListener('keyup', (e) => { if ((e.key === 'Enter' || e.keyCode === 13) && !e.isComposing) { e.preventDefault(); globalSearch(); } });

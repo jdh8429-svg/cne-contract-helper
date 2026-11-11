@@ -52,6 +52,12 @@ function fixture(urlStr) {
     { bidNtceNo: 'R26BK00000198', bidNtceOrd: '001', bidNtceNm: '청사 방수공사', ntceInsttNm: '충청남도교육청', bidNtceDt: '2026-10-01 09:00:00', bidClseDt: '2026-10-05 10:00:00', presmptPrce: '150000000', ntceKindNm: '변경공고', ntceSpecFileNm1: '시방서.pdf', ntceSpecDocUrl1: 'https://www.g2b.go.kr/d3' },
   ]);
   if (op.startsWith('getBidPblancListInfo') && /^(getBidPblancListInfo)(Thng|Cnstwk|Servc|Frgcpt)$/.test(op)) return wrap([{ bidNtceNo: 'R26BK00000101', bidNtceOrd: '000', bidNtceNm: '정보시스템 통합유지관리 용역', bidNtceDt: '2026-07-20 10:00:00', bidClseDt: '2026-08-10 10:00:00', opengDt: '2026-08-11 11:00:00', presmptPrce: '830000000', asignBdgtAmt: '913000000', bidNtceDtlUrl: 'https://www.g2b.go.kr/n' }]);
+  if (op.startsWith('getCntrctProcssIntgOpen')) return wrap([{ orderPlanNo: '5-1-2026-8340103-000004-00', orderPlanUntyNo: '5-1-2026-8340103-000004', orderBizNm: '정보시스템 통합유지관리', orderInsttNm: '충청남도교육청', orderYm: '2026-07', prcrmntMethdNm: '자체조달', cntrctCnclsMthdNm: '협상', bfSpecRgstNo: 'R26BD00011111', bfSpecBizNm: '정보시스템 통합유지관리 용역', opninRgstClseDt: '2026-07-10 10:00', bidNtceNo: 'R26BK00000211', bidwinrInfoList: '[1^가나다정보통신(주)^1234567890^홍길동^800000000^88.041^5^2026-08-11 11:00]', cntrctInfoList: '[1^2026090000001^정보시스템 통합유지관리 용역^충청남도교육청^충청남도교육청^협상에의한계약^912000000^2026-09-15]' }]);
+  if (op.startsWith('getPublicPrcureThngInfo')) return wrap([{ bsnsDivNm: '일반용역', refNo: '정보-123', prdctClsfcNoNm: '정보시스템 통합유지관리 용역', orderInsttNm: '충청남도교육청', rlDminsttNm: '충청남도교육청', asignBdgtAmt: '902000000', rcptDt: '2026-07-01 09:00:00', opninRgstClseDt: '2026-07-10 10:00:00', swBizObjYn: 'Y', bfSpecRgstNo: 'R26BD00011111', specDocFileUrl1: 'https://www.g2b.go.kr/s1', prdctDtlList: '[1^8111159901^정보시스템유지관리서비스]', bidNtceNoList: 'R26BK00000211' }]);
+  if (op.startsWith('getPublicPrcureThngOpinionInfo')) return wrap([{ opninNo: '1', rplyNo: '0', opninTitl: '과업 범위 문의', mkngCorpNm: '라마바(주)', mkrNm: '김비공개', mkrTel: '01000000000', mkrEmail: 'secret@x.kr', inptDt: '2026-07-05 10:00:00', opninCntnts: '과업 범위를 확인 부탁드립니다.' }, { opninNo: '1', rplyNo: '1', opninTitl: '관련 답변', mkngCorpNm: '충청남도교육청', inptDt: '2026-07-06 10:00:00', opninCntnts: '답변 드립니다.' }]);
+  if (/^getScsbidListSttus/.test(op)) return wrap([{ bidNtceNo: 'R26BK00000211', bidNtceOrd: '000', bidClsfcNo: '0', rbidNo: '000', prtcptCnum: '5', bidwinnrNm: '가나다정보통신(주)', bidwinnrBizno: '1234567890', bidwinnrCeoNm: '홍길동', sucsfbidAmt: '800000000', sucsfbidRate: '88.041', rlOpengDt: '2026-08-11 11:00:00', fnlSucsfDate: '2026-08-20' }]);
+  if (op === 'getOpengResultListInfoOpengCompt') return wrap([{ opengRank: '2', prcbdrBizno: '2223334445', prcbdrNm: '라마바(주)', bidprcAmt: '810000000', bidprcrt: '89.1', rmrk: '' }, { opengRank: '1', prcbdrBizno: '1234567890', prcbdrNm: '가나다정보통신(주)', bidprcAmt: '800000000', bidprcrt: '88.041', rmrk: '낙찰', techEvlVal: '81.5', bidPrceEvlVal: '9.5', totalEvlAmtVal: '91.0' }]);
+  if (/PreparPcDetail$/.test(op)) return wrap([{ compnoRsrvtnPrceSno: '1', bsisPlnprc: '905000000', drwtYn: 'Y', drwtNum: '2', plnprc: '908000000', bssamt: '910000000', totRsrvtnPrceNum: '15', bidwinrSlctnAplBssCntnts: '조달청' }]);
   if (op === 'getBidPblancListInfoEorderAtchFileInfo') return wrap([{ eorderDocDivNm: '제안요청서', eorderAtchFileNm: '제안요청서_최종.hwpx', eorderAtchFileUrl: 'https://www.g2b.go.kr/e1' }]);
   if (op === 'getBidPblancListInfoLicenseLimit') return wrap({ item: [{ lcnsLmtNm: '토목공사업/0001', permsnIndstrytyList: '' }] });
   if (op === 'getBidPblancListInfoPrtcptPsblRgn') return wrap([{ prtcptPsblRgnNm: '충청남도' }]);
@@ -258,8 +264,28 @@ if (chromium) {
     ok(await page.locator('#slist .doc').count() >= 3, `[${vp.name}] 공고문서 칩`);
     await page.click('#slist button[data-act="eorder"]');
     await page.waitForSelector('#ssub-0 .doc');
-    await page.click('#slist button[data-act="cntrct"]');
-    await page.waitForSelector('#ssub-0 table');
+    await page.click('#slist button[data-act="flow"]');
+    await page.waitForSelector('#ssub-0 .steps button[aria-selected="true"]');
+    ok((await page.getAttribute('#ssub-0 button[data-step="win"]', 'aria-selected')) === 'true', `[${vp.name}] 계약과정: 낙찰 단계가 먼저 열림`);
+    await page.waitForSelector('#ssub-0 .stepbody h4');
+    ok((await page.textContent('#ssub-0 .stepbody')).includes('88.041%') && await page.locator('#ssub-0 .stepbody a[href="#corp/1234567890"]').count() > 0, `[${vp.name}] 낙찰: 낙찰률·개찰순위·업체 확인 링크`);
+    ok(decodeURIComponent(page.url()).includes('flow=R26BK00000211'), `[${vp.name}] 주소에 공고 기록`);
+    await page.click('#ssub-0 button[data-step="spec"]');
+    await page.waitForSelector('#ssub-0 .opinions');
+    { const tx = await page.textContent('#ssub-0 .stepbody'); ok(tx.includes('902,000,000원') && tx.includes('과업 범위 문의') && !tx.includes('secret@x.kr') && !tx.includes('김비공개'), `[${vp.name}] 사전규격: 예산·의견 표시, 작성자 개인정보 숨김`); }
+    ok(page.url().includes('step=spec'), `[${vp.name}] 단계가 주소에 기록됨 (로컬 링크)`);
+    await page.locator('#ssub-0').screenshot({ path: path.join(shots, `${vp.name}-3b-flow-spec.png`) });
+    await page.click('#ssub-0 button[data-step="win"]');
+    await page.waitForSelector('#ssub-0 .stepbody h4');
+    await page.locator('#ssub-0').screenshot({ path: path.join(shots, `${vp.name}-3c-flow-win.png`) });
+    await page.click('#ssub-0 button[data-step="plan"]');
+    ok((await page.textContent('#ssub-0 .stepbody')).includes('5-1-2026-8340103-000004-00'), `[${vp.name}] 발주계획 단계`);
+    await page.click('#ssub-0 button[data-step="bid"]');
+    ok(await page.locator('#ssub-0 .stepbody .flowlinks a').count() > 0, `[${vp.name}] 입찰공고 단계 + 조달청 링크`);
+    await page.click('#ssub-0 button[data-step="cntrct"]');
+    await page.waitForSelector('#ssub-0 .stepbody table >> visible=true');
+    ok((await page.textContent('#ssub-0 .stepbody')).includes('계약 상세'), `[${vp.name}] 계약 단계`);
+    { const h = page.url().slice(page.url().indexOf('#')); await page.goto(base + '/' + h.replace('step=cntrct', 'step=spec')); await page.reload(); await page.waitForSelector('#ssub-0 .opinions'); ok(true, `[${vp.name}] 링크로 다시 열면 같은 공고·단계가 펼쳐짐`); }
     ok(true, `[${vp.name}] e발주 문서 · 계약 결과`);
     await page.selectOption('#sform select[name="preset"]', '3');
     const f3 = await page.inputValue('#sform input[name="from"]');
@@ -324,8 +350,8 @@ if (chromium) {
     await page.goto(base + '/#settings/check');
     await page.waitForSelector('#health .badge');
     await page.click('#htest');
-    await page.waitForFunction(() => document.querySelectorAll('#htestres .badge').length === 5);
-    ok(await page.locator('#htestres .badge.grn').count() === 5, `[${vp.name}] 연결 테스트 5개 정상`);
+    await page.waitForFunction(() => document.querySelectorAll('#htestres .badge').length === 8);
+    ok(await page.locator('#htestres .badge.grn').count() === 8, `[${vp.name}] 연결 테스트 8개 정상`);
     await shot('7-settings');
 
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1);

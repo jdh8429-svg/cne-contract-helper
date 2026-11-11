@@ -8,7 +8,11 @@ const BASES = {
   cntrct: 'https://apis.data.go.kr/1230000/ao/CntrctInfoService',
   usr: 'https://apis.data.go.kr/1230000/ao/UsrInfoService02',
   ind: 'https://apis.data.go.kr/1230000/ao/IndstrytyBaseLawrgltInfoService',
+  pre: 'https://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService',
+  intg: 'https://apis.data.go.kr/1230000/ao/CntrctProcssIntgOpenService',
+  scsbid: 'https://apis.data.go.kr/1230000/as/ScsbidInfoService',
 };
+const B4 = ['Thng', 'Cnstwk', 'Servc', 'Frgcpt'];
 
 const OPS = {
   bid: [
@@ -29,6 +33,12 @@ const OPS = {
   ],
   usr: ['getDminsttInfo02', 'getPrcrmntCorpBasicInfo02', 'getPrcrmntCorpIndstrytyInfo02', 'getPrcrmntCorpSplyPrdctInfo02', 'getUnptRsttCorpInfo02'],
   ind: ['getIndstrytyBaseLawrgltInfoList'],
+  // 사전규격: 검색조건 목록 + 규격서 의견
+  pre: B4.flatMap((b) => [`getPublicPrcureThngInfo${b}PPSSrch`, `getPublicPrcureThngOpinionInfo${b}`]),
+  // 계약과정 통합공개: 공고번호 하나로 발주계획~계약
+  intg: B4.map((b) => `getCntrctProcssIntgOpen${b}`),
+  // 낙찰정보: 최종낙찰 · 개찰결과 · 예비가격 · 개찰순위
+  scsbid: B4.flatMap((b) => [`getScsbidListSttus${b}`, `getOpengResultListInfo${b}`, `getOpengResultListInfo${b}PreparPcDetail`]).concat(['getOpengResultListInfoOpengCompt']),
 };
 
 // 업종 목록처럼 자주 바뀌지 않는 데이터는 더 오래 캐시

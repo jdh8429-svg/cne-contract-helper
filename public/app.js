@@ -784,12 +784,14 @@
   // =====================================================================
   // 3. 유사사업 찾기
   // =====================================================================
-  const S = { q: '', ind: '', biz: '용역', from: monthsAgo(1), to: iso(today()), doc: '전체', items: null, err: null, seq: 0, key: '', failed: 0 };
+  const S = { flow: '', step: '', q: '', ind: '', biz: '용역', from: monthsAgo(1), to: iso(today()), doc: '전체', items: null, err: null, seq: 0, key: '', failed: 0 };
   const PRESETS = [['1', '최근 1개월'], ['3', '최근 3개월'], ['6', '최근 6개월'], ['12', '최근 1년']];
   const presetOf = (from, to) => { if (to !== iso(today())) return ''; const p = PRESETS.find(([m]) => monthsAgo(Number(m)) === from); return p ? p[0] : ''; };
 
   function renderSimilar(view, arg, params) {
     const ind = params.ind || '';
+    S.flow = params.flow || ''; S.step = params.step || '';
+    if (params.biz && BIZ[params.biz]) S.biz = params.biz;
     const key = arg + '|' + ind;
     if (key !== S.key) { S.q = arg; S.ind = ind; S.key = key; S.items = null; S.err = null; }
     const indIt = S.ind ? indByCode(S.ind) : null;
@@ -817,7 +819,7 @@
       const q = f.q.value.trim();
       const bad = checkRange(f.from.value, f.to.value, MAX_DAYS.similar);
       if (bad) { $('#slist').innerHTML = errBox(bad); return; }
-      S.biz = f.biz.value; S.from = f.from.value; S.to = f.to.value; S.doc = f.doc.value;
+      S.biz = f.biz.value; S.from = f.from.value; S.to = f.to.value; S.doc = f.doc.value; S.flow = ''; S.step = '';
       if (!q && !S.ind) return;
       if (q !== S.q) { S.q = q; S.key = q + '|' + S.ind; S.items = null; go('similar', q, { ind: S.ind }); } else searchSimilar();
     });
@@ -856,6 +858,7 @@
     const list = $('#slist'), sum = $('#ssum');
     if (!list) return;
     if (S.err) { list.innerHTML = errBox(S.err); sum.innerHTML = ''; return; }
+    if (!S.items && S.flow) S.items = [];
     if (!S.items) { list.innerHTML = `<div class="card">${empty('사업명 키워드를 입력하고 검색하세요.')}</div>`; sum.innerHTML = '<h2>금액 참고</h2><p class="small muted">검색하면 추정가격 통계가 표시됩니다.</p>'; return; }
     const shown = S.items.filter((n) => S.doc === '전체' || noticeDocs(n).some((d) => d.kind === S.doc));
     if (!shown.length) list.innerHTML = `<div class="card">${empty(S.doc === '전체' ? '검색 결과가 없습니다.' : `'${S.doc}'가 첨부된 공고가 없습니다.`)}</div>`;
@@ -869,7 +872,7 @@
         ${docChips(noticeDocs(n))}
         <div class="btns" style="margin-top:12px">
           <button type="button" class="btn sm" data-act="eorder" data-i="${i}">e발주 문서(제안요청서 등)</button>
-          <button type="button" class="btn sm" data-act="cntrct" data-i="${i}">계약 결과 보기</button>
+          <button type="button" class="btn sm" data-act="flow" data-i="${i}" aria-expanded="false">계약과정 한눈에</button>
           <button type="button" class="btn sm" data-act="save" data-i="${i}">보관함에 저장</button>
         </div>
         <div id="ssub-${i}"></div>
@@ -880,7 +883,34 @@
       if (b.dataset.act === 'save') saveItem({ kind: '공고', key: n.bidNtceNo, name: `${n.bidNtceNm} (${n.dminsttNm || n.ntceInsttNm})`, link: n.bidNtceDtlUrl || n.bidNtceUrl || '' });
       if (b.dataset.act === 'eorder') loadEorder(n, sub);
       if (b.dataset.act === 'cntrct') loadBidContract(n, sub, S.biz);
+      if (b.dataset.act === 'flow') {
+        // 같은 버튼을 다시 누르면 닫힘
+        if (sub._flow && sub._flow.n === n) { sub._flow = null; sub.innerHTML = ''; b.setAttribute('aria-expanded', 'false'); S.flow = ''; replaceHash('similar', S.q, { ind: S.ind, biz: S.biz }); return; }
+        $$('button[data-act="flow"]', list).forEach((x) => x.setAttribute('aria-expanded', 'false'));
+        b.setAttribute('aria-expanded', 'true');
+        openFlow(n, sub, S.biz, n.bidNtceNo === S.flow ? S.step : '');
+        S.flow = n.bidNtceNo; S.step = '';
+        replaceHash('similar', S.q, { ind: S.ind, biz: S.biz, flow: S.flow });
+      }
     }));
+    // 주소에 열어 둔 공고(flow)·단계(step)가 있으면 그대로 펼침
+    if (S.flow) {
+      const k = shown.slice(0, 60).findIndex((n) => n.bidNtceNo === S.flow);
+      if (k >= 0) {
+        const b = $(`button[data-act="flow"][data-i="${k}"]`, list), sub = $('#ssub-' + k);
+        b.setAttribute('aria-expanded', 'true');
+        openFlow(shown[k], sub, S.biz, S.step);
+        revealIfNew(sub.closest('.result'));
+      } else if (S.flowTried !== S.flow) {
+        // 주소로 받은 공고가 지금 검색 결과에 없으면 공고번호로 직접 불러와 맨 위에 보여 줌
+        S.flowTried = S.flow;
+        const want = S.flow;
+        g2b('bid', `getBidPblancListInfo${BIZ[S.biz]}`, { inqryDiv: 2, bidNtceNo: want, numOfRows: 10 }).then((r) => {
+          const it = r.items.sort((a, b) => String(b.bidNtceOrd).localeCompare(String(a.bidNtceOrd)))[0];
+          if (it && S.flow === want && S.items && !S.items.some((x) => x.bidNtceNo === want)) { S.items.unshift(it); drawSimilar(); }
+        }).catch(() => { /* 무시: 검색 결과만 표시 */ });
+      }
+    }
     const amts = shown.map((n) => num(n.presmptPrce)).filter((v) => v > 0);
     const avg = amts.length ? Math.round(amts.reduce((a, b) => a + b, 0) / amts.length) : 0;
     sum.innerHTML = `<h2>금액 참고</h2>
@@ -916,6 +946,190 @@
         <tbody>${r.items.map((c) => { const p = parseCorpList(c.corpList)[0]; return `<tr><td>${esc(c.cntrctNm)}</td><td>${esc(p ? p.name : '-')}</td><td class="num">${won(c.totCntrctAmt)}</td><td class="nw">${pct(c.totCntrctAmt, n.asignBdgtAmt)}</td><td class="nw">${esc(dateOnly(c.cntrctCnclsDate))}</td><td class="nw">${ext(c.cntrctDtlInfoUrl)}</td></tr>`; }).join('')}</tbody>
       </table></div>` : '<div class="small muted">아직 계약 정보가 없습니다. (개찰 전이거나 계약 진행 중일 수 있습니다)</div>'}</div>`;
     } catch (e) { sub.innerHTML = `<div class="sub">${errBox(e.message)}</div>`; }
+  }
+
+  // ---------- 계약과정 한눈에 (발주계획 → 사전규격 → 입찰공고 → 낙찰 → 계약) ----------
+  // 계약과정통합공개서비스로 공고번호 하나에 연결된 번호들을 받고, 단계를 누르면 그 단계의 상세를 따로 조회
+  const FLOW_STEPS = [['plan', '발주계획'], ['spec', '사전규격'], ['bid', '입찰공고'], ['win', '낙찰'], ['cntrct', '계약']];
+  const G2B_HOME = 'https://www.g2b.go.kr';
+  // "[a^b^c],[...]" 목록 → 배열의 배열
+  const caretList = (s) => (String(s || '').match(/\[[^\]]*\]/g) || []).map((x) => x.slice(1, -1).split('^').map((v) => v.trim()));
+  const corpLink = (bizno, name) => { const b = String(bizno || '').replace(/\D/g, ''); return b.length === 10 ? `<a href="${esc(hashOf('corp', b))}">${esc(name || b)}</a>` : esc(name || '-'); };
+  const copyBtn = (v) => (v ? ` <button type="button" class="linkbtn small" data-copy="${esc(v)}">번호 복사</button>` : '');
+  const kvRows = (rows) => `<dl class="kv">${rows.filter((r) => r[1] != null && r[1] !== '' && r[1] !== '-').map(([k, v, raw]) => `<dt>${esc(k)}</dt><dd>${raw ? v : esc(v)}</dd>`).join('')}</dl>`;
+  const linkRow = (links) => { const l = links.filter((x) => x && x[1]); return l.length ? `<div class="flowlinks"><span class="small muted">조달청 연결</span>${l.map(([t, u]) => ext(u, t)).join('')}</div>` : ''; };
+
+  function openFlow(n, sub, biz, step) {
+    const st = { n, biz, step: step || '', intg: null, err: null, cache: {} };
+    sub.innerHTML = `<div class="sub flow">${loading('계약과정을 불러오는 중…')}</div>`;
+    sub._flow = st;
+    g2b('intg', `getCntrctProcssIntgOpen${BIZ[biz]}`, { inqryDiv: 1, bidNtceNo: n.bidNtceNo, numOfRows: 10 })
+      .then((r) => { st.intg = r.items[0] || {}; }, (e) => { st.intg = {}; st.err = e.message; })
+      .then(() => {
+        if (!st.step) st.step = caretList(st.intg.bidwinrInfoList).length ? 'win' : 'bid';
+        drawFlow(sub);
+      });
+  }
+
+  function flowStatus(st, key) {
+    const g = st.intg || {}, n = st.n;
+    if (key === 'plan') return g.orderPlanNo ? (g.orderYm || '있음') : '정보 없음';
+    if (key === 'spec') return g.bfSpecRgstNo ? (dateOnly(g.opninRgstClseDt) ? '의견마감 ' + dateOnly(g.opninRgstClseDt) : g.bfSpecRgstNo) : '정보 없음';
+    if (key === 'bid') return dateOnly(n.bidNtceDt) || '-';
+    if (key === 'win') { const w = caretList(g.bidwinrInfoList)[0]; return w ? (w[5] ? `낙찰률 ${w[5]}%` : w[1]) : (st.err ? '조회 필요' : '개찰 전·정보 없음'); }
+    if (key === 'cntrct') { const c = caretList(g.cntrctInfoList)[0]; return c ? (c[7] || '체결') : (st.err ? '조회 필요' : '정보 없음'); }
+    return '';
+  }
+
+  function drawFlow(sub) {
+    const st = sub._flow;
+    sub.innerHTML = `<div class="sub flow">
+      <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px;align-items:baseline"><h3 style="margin:0">계약과정 한눈에</h3><span class="small muted">단계를 누르면 아래에 상세가 나옵니다</span></div>
+      ${st.err ? `<p class="small" style="color:var(--red);margin:6px 0 0">계약과정 통합정보를 받지 못했습니다: ${esc(st.err)} (입찰공고·낙찰·계약 단계는 각각 따로 조회합니다)</p>` : ''}
+      <ol class="steps" role="tablist" aria-label="계약 단계">${FLOW_STEPS.map(([k, t], i) => `<li><button type="button" role="tab" aria-selected="${st.step === k}" data-step="${k}"><span class="no">${i + 1}</span><span class="t">${t}</span><span class="s">${esc(flowStatus(st, k))}</span></button></li>`).join('')}</ol>
+      <div class="stepbody" role="tabpanel"></div>
+    </div>`;
+    $$('button[data-step]', sub).forEach((b) => b.addEventListener('click', () => { st.step = b.dataset.step; drawFlow(sub); syncFlowHash(st); }));
+    drawStep(sub);
+  }
+
+  // 지금 연 공고·단계를 주소에 남김 → 그대로 복사해 다른 사람에게 보내거나 새로고침해도 같은 화면
+  function syncFlowHash(st) {
+    S.flow = st.n.bidNtceNo; S.step = st.step;
+    replaceHash('similar', S.q, { ind: S.ind, biz: S.biz, flow: S.flow, step: S.step });
+  }
+
+  async function drawStep(sub) {
+    const st = sub._flow, box = $('.stepbody', sub), g = st.intg || {}, n = st.n, B = BIZ[st.biz];
+    const step = st.step;
+    const ntceUrl = n.bidNtceDtlUrl || n.bidNtceUrl || '';
+    const put = (html) => { if (sub._flow === st && st.step === step) { box.innerHTML = html; bindCopy(box); } };
+    if (step === 'plan') {
+      if (!g.orderPlanNo) { put(`${empty('연결된 발주계획 정보가 없습니다. (발주계획 없이 공고된 건일 수 있습니다)')}${linkRow([['나라장터', G2B_HOME]])}`); return; }
+      put(`${kvRows([
+        ['발주계획번호', esc(g.orderPlanNo) + copyBtn(g.orderPlanNo), true], ['발주계획통합번호', g.orderPlanUntyNo], ['발주사업명', g.orderBizNm], ['발주기관', g.orderInsttNm],
+        ['발주년월', g.orderYm], ['조달방식', g.prcrmntMethdNm], ['계약체결방법', g.cntrctCnclsMthdNm], ['조달요청번호', g.prcrmntReqNo],
+      ])}${linkRow([['나라장터에서 발주계획 보기 (번호로 검색)', G2B_HOME]])}`);
+      return;
+    }
+    if (step === 'spec') {
+      if (!g.bfSpecRgstNo) { put(`${empty('연결된 사전규격이 없습니다. (사전규격 공개 없이 공고된 건일 수 있습니다)')}`); return; }
+      put(loading('사전규격 상세와 규격서 의견을 불러오는 중…'));
+      const [r1, r2] = await Promise.allSettled([
+        st.cache.spec || (st.cache.spec = g2b('pre', `getPublicPrcureThngInfo${B}PPSSrch`, { inqryDiv: 2, bfSpecRgstNo: g.bfSpecRgstNo, numOfRows: 5 })),
+        st.cache.op || (st.cache.op = g2bAll('pre', `getPublicPrcureThngOpinionInfo${B}`, { inqryDiv: 2, bfSpecRgstNo: g.bfSpecRgstNo }, { per: 100, max: 300 })),
+      ]);
+      const p = r1.status === 'fulfilled' ? (r1.value.items[0] || null) : null;
+      const docs = p ? [1, 2, 3, 4, 5].map((i) => p['specDocFileUrl' + i]).filter(Boolean).map((u, i) => ({ kind: '규격서', file: '규격문서 ' + (i + 1), url: u })) : [];
+      const items = p ? caretList(p.prdctDtlList) : [];
+      const ops = r2.status === 'fulfilled' ? r2.value.items : [];
+      const closeDt = (p && p.opninRgstClseDt) || g.opninRgstClseDt;
+      const open = closeDt && new Date(String(closeDt).replace(' ', 'T')) > new Date();
+      put(`${r1.status === 'rejected' ? errBox('사전규격 상세 조회 실패: ' + r1.reason.message) : ''}
+        ${kvRows([
+          ['사전규격등록번호', esc(g.bfSpecRgstNo) + copyBtn(g.bfSpecRgstNo) + (open ? ' <span class="badge grn">의견 접수 중</span>' : ''), true],
+          ['사업명(품명)', (p && p.prdctClsfcNoNm) || g.bfSpecBizNm], ['업무구분', p && p.bsnsDivNm], ['참조번호', p && p.refNo],
+          ['발주기관', (p && p.orderInsttNm) || g.bfSpecNtceInsttNm], ['실수요기관', (p && p.rlDminsttNm) || g.bfSpecDminsttNm],
+          ['배정예산', p && p.asignBdgtAmt ? `<strong>${won(p.asignBdgtAmt)}</strong>` : '', true],
+          ['접수일시', p && dt(p.rcptDt)], ['의견등록마감', dt(closeDt)], ['납품기한', p && (dateOnly(p.dlvrTmlmtDt) || (p.dlvrDaynum ? p.dlvrDaynum + '일' : ''))],
+          ['SW사업대상', p && (p.swBizObjYn === 'Y' ? '예' : p.swBizObjYn === 'N' ? '아니오' : '')],
+          ['담당', p && [p.ofclNm, p.ofclTelNo].filter(Boolean).join(' · ')],
+          ['세부품명', items.length ? items.map((x) => `${esc(x[2] || '')} <span class="muted small">${esc(x[1] || '')}</span>`).join('<br>') : '', true],
+          ['연결 입찰공고', p && p.bidNtceNoList],
+          ['등록 · 변경', p && [dt(p.rgstDt), dt(p.chgDt)].filter(Boolean).join(' · ')],
+        ])}
+        <h4>규격 문서</h4>${docs.length ? docChips(docs) : '<div class="small muted">첨부된 규격 문서가 없습니다.</div>'}
+        <h4>규격서 의견 · 답변 ${ops.length ? `(${ops.length}건)` : ''}</h4>
+        ${r2.status === 'rejected' ? errBox('의견 조회 실패: ' + r2.reason.message) : ops.length ? `<div class="opinions">${ops.map((o) => {
+          const files = [1, 2, 3, 4, 5].map((i) => o['specDocOpninFileUrl' + i]).filter(Boolean);
+          const reply = String(o.rplyNo || '0') !== '0' && o.rplyNo != null && o.rplyNo !== '';
+          return `<div class="op ${reply ? 'reply' : ''}"><div class="oph"><strong>${reply ? '답변' : '의견'} · ${esc(o.opninTitl || '')}</strong><span class="small muted">${esc(o.mkngCorpNm || '')} · ${esc(dt(o.inptDt))}</span></div>
+            <p>${esc(o.opninCntnts || '')}</p>${files.length ? `<div class="small">${files.map((u, i) => ext(u, '첨부 ' + (i + 1))).join(' · ')}</div>` : ''}</div>`;
+        }).join('')}</div><p class="small muted" style="margin:6px 0 0">의견 작성자 이름·전화번호·이메일은 표시하지 않습니다.</p>` : '<div class="small muted">등록된 의견이 없습니다.</div>'}
+        ${linkRow([['나라장터에서 사전규격 보기 (번호로 검색)', G2B_HOME]])}`);
+      return;
+    }
+    if (step === 'bid') {
+      put(`${kvRows([
+        ['입찰공고번호', esc(n.bidNtceNo + (n.bidNtceOrd ? '-' + n.bidNtceOrd : '')) + copyBtn(n.bidNtceNo), true], ['공고명', n.bidNtceNm], ['공고 종류', n.ntceKindNm],
+        ['공고기관', n.ntceInsttNm], ['수요기관', n.dminsttNm], ['공고일시', dt(n.bidNtceDt)], ['입찰마감', dt(n.bidClseDt)], ['개찰일시', dt(n.opengDt)],
+        ['계약방법', n.cntrctCnclsMthdNm], ['낙찰방법', n.sucsfbidMthdNm], ['추정가격', won(n.presmptPrce)], ['배정예산', won(n.asignBdgtAmt)],
+        ['낙찰하한율', n.sucsfbidLwltRate ? n.sucsfbidLwltRate + '%' : ''], ['평가 비율', n.techAbltEvlRt ? `기술 ${n.techAbltEvlRt} : 가격 ${n.bidPrceEvlRt}` : ''],
+        ['담당', [n.ntceInsttOfclNm, n.ntceInsttOfclTelNo].filter(Boolean).join(' · ')],
+      ])}
+        <h4>공고 문서</h4>${docChips(noticeDocs(n)) || '<div class="small muted">첨부 문서가 없습니다.</div>'}
+        <div class="btns" style="margin-top:10px"><button type="button" class="btn sm" data-eorder>e발주 문서(제안요청서 등) 보기</button></div><div class="eorderbox"></div>
+        ${linkRow([['나라장터 공고 상세', ntceUrl], ['표준공고서', n.stdNtceDocUrl]])}`);
+      const eb = $('[data-eorder]', box);
+      if (eb) eb.addEventListener('click', () => loadEorder(n, $('.eorderbox', box)));
+      return;
+    }
+    if (step === 'win') {
+      put(loading('낙찰 · 개찰 결과를 불러오는 중…'));
+      let fin = null, finErr = null;
+      try {
+        const r = await (st.cache.win || (st.cache.win = g2b('scsbid', `getScsbidListSttus${B}`, { inqryDiv: 4, bidNtceNo: n.bidNtceNo, numOfRows: 20 })));
+        fin = r.items.sort((a, b) => String(b.bidNtceOrd).localeCompare(String(a.bidNtceOrd)) || String(b.rbidNo).localeCompare(String(a.rbidNo)))[0] || null;
+      } catch (e) { finErr = e.message; }
+      const iw = caretList(g.bidwinrInfoList)[0];
+      const key = fin || {};
+      const ord = key.bidNtceOrd || n.bidNtceOrd || '000';
+      const [rk, pp] = await Promise.allSettled([
+        st.cache.rank || (st.cache.rank = g2bAll('scsbid', 'getOpengResultListInfoOpengCompt', { bidNtceNo: n.bidNtceNo, bidNtceOrd: ord, bidClsfcNo: key.bidClsfcNo || '0', rbidNo: key.rbidNo || '000' }, { per: 100, max: 500 })),
+        st.cache.pre || (st.cache.pre = g2b('scsbid', `getOpengResultListInfo${B}PreparPcDetail`, { inqryDiv: 2, bidNtceNo: n.bidNtceNo, bidNtceOrd: ord, numOfRows: 20 })),
+      ]);
+      const ranks = rk.status === 'fulfilled' ? rk.value.items.slice().sort((a, b) => num(a.opengRank) - num(b.opengRank)) : [];
+      const preps = pp.status === 'fulfilled' ? pp.value.items.slice().sort((a, b) => num(a.compnoRsrvtnPrceSno) - num(b.compnoRsrvtnPrceSno)) : [];
+      const p0 = preps[0] || {};
+      const nego = ranks.some((r) => r.totalEvlAmtVal || r.techEvlVal);
+      if (!fin && !iw && !ranks.length) {
+        put(`${finErr ? errBox('낙찰정보 조회 실패: ' + finErr) : ''}${empty('아직 낙찰 정보가 없습니다. (개찰 전이거나 유찰·재입찰일 수 있습니다)')}${linkRow([['나라장터 공고 상세(개찰결과)', ntceUrl]])}`);
+        return;
+      }
+      put(`${finErr ? `<p class="small" style="color:var(--red)">낙찰정보서비스 조회 실패(${esc(finErr)}) → 계약과정 통합정보로 표시합니다.</p>` : ''}
+        ${kvRows(fin ? [
+          ['최종낙찰업체', `<strong>${corpLink(fin.bidwinnrBizno, fin.bidwinnrNm)}</strong>${fin.bidwinnrBizno ? ` <span class="small muted">${esc(fin.bidwinnrBizno)} · 업체 확인으로 이동</span>` : ''}`, true],
+          ['대표자', fin.bidwinnrCeoNm], ['최종낙찰금액', `<strong>${won(fin.sucsfbidAmt)}</strong>`, true], ['최종낙찰률', fin.sucsfbidRate ? fin.sucsfbidRate + '%' : ''],
+          ['참가업체 수', fin.prtcptCnum ? fin.prtcptCnum + '개사' : ''], ['실개찰일시', dt(fin.rlOpengDt)], ['최종낙찰일자', dateOnly(fin.fnlSucsfDate)],
+          ['차수', [fin.bidNtceOrd, fin.rbidNo && fin.rbidNo !== '000' ? '재입찰 ' + fin.rbidNo : ''].filter(Boolean).join(' · ')],
+        ] : [
+          ['낙찰업체', `<strong>${corpLink(iw[2], iw[1])}</strong>`, true], ['대표자', iw[3]], ['낙찰금액', `<strong>${won(iw[4])}</strong>`, true],
+          ['낙찰률', iw[5] ? iw[5] + '%' : ''], ['참가업체 수', iw[6] ? iw[6] + '개사' : ''], ['개찰일시', iw[7]],
+        ])}
+        ${preps.length ? `<h4>예정가격 · 기초금액</h4>${kvRows([['기초금액', won(p0.bssamt)], ['예정가격', `<strong>${won(p0.plnprc)}</strong>`, true], ['예정가격/기초금액', pct(p0.plnprc, p0.bssamt)], ['예비가격', p0.totRsrvtnPrceNum ? `${p0.totRsrvtnPrceNum}개 중 추첨` : ''], ['낙찰자 선정기준', p0.bidwinrSlctnAplBssCntnts]])}
+          <details><summary class="small">복수예비가격 ${preps.length}개 보기</summary><div class="tablewrap"><table><thead><tr><th>순번</th><th class="num">기초예정가격</th><th>추첨</th><th class="num">추첨 횟수</th></tr></thead><tbody>${preps.map((x) => `<tr${x.drwtYn === 'Y' ? ' class="hl"' : ''}><td>${esc(x.compnoRsrvtnPrceSno)}</td><td class="num">${won(x.bsisPlnprc)}</td><td>${x.drwtYn === 'Y' ? '<span class="badge blue">추첨</span>' : ''}</td><td class="num">${esc(x.drwtNum || '')}</td></tr>`).join('')}</tbody></table></div></details>` : ''}
+        <h4>개찰 순위 ${ranks.length ? `(${ranks.length}개사)` : ''}</h4>
+        ${rk.status === 'rejected' ? errBox('개찰순위 조회 실패: ' + rk.reason.message) : ranks.length ? `<div class="tablewrap"><table><thead><tr><th>순위</th><th>업체</th><th class="num">투찰금액</th><th class="num">투찰률</th>${nego ? '<th class="num">기술</th><th class="num">가격</th><th class="num">종합</th>' : ''}<th>비고</th></tr></thead><tbody>
+          ${ranks.slice(0, 30).map((r) => `<tr${/낙찰/.test(r.rmrk || '') ? ' class="hl"' : ''}><td>${esc(r.opengRank)}</td><td>${corpLink(r.prcbdrBizno, r.prcbdrNm)}</td><td class="num">${won(r.bidprcAmt)}</td><td class="num">${r.bidprcrt ? esc(r.bidprcrt) + '%' : '-'}</td>${nego ? `<td class="num">${esc(r.techEvlVal || '')}</td><td class="num">${esc(r.bidPrceEvlVal || '')}</td><td class="num">${esc(r.totalEvlAmtVal || '')}</td>` : ''}<td>${esc(r.rmrk || '')}</td></tr>`).join('')}
+        </tbody></table></div>${ranks.length > 30 ? `<p class="small muted">상위 30개사만 표시 (전체 ${ranks.length}개사는 나라장터에서 확인)</p>` : ''}` : '<div class="small muted">개찰 순위 정보가 없습니다.</div>'}
+        ${linkRow([['나라장터 공고 상세(개찰결과)', ntceUrl]])}`);
+      return;
+    }
+    if (step === 'cntrct') {
+      put(loading('계약 정보를 불러오는 중…'));
+      const list = caretList(g.cntrctInfoList);
+      let items = [], cErr = null;
+      try {
+        const op = `getCntrctInfoList${B}PPSSrch`;
+        let r = await (st.cache.c1 || (st.cache.c1 = g2b('cntrct', op, { inqryDiv: 4, ntceNo: n.bidNtceNo, numOfRows: 20 })));
+        if (!r.items.length && n.bidNtceOrd) r = await (st.cache.c2 || (st.cache.c2 = g2b('cntrct', op, { inqryDiv: 4, ntceNo: n.bidNtceNo + n.bidNtceOrd, numOfRows: 20 })));
+        items = r.items;
+      } catch (e) { cErr = e.message; }
+      if (!items.length && !list.length) { put(`${cErr ? errBox(cErr) : ''}${empty('아직 계약 정보가 없습니다. (개찰 전이거나 계약 진행 중일 수 있습니다)')}`); return; }
+      put(items.length ? `<div class="tablewrap"><table>
+          <thead><tr><th>계약명</th><th>업체</th><th class="num">총계약금액</th><th class="nw">계약/배정예산</th><th class="nw">계약일</th><th class="nw">계약기간</th><th></th></tr></thead>
+          <tbody>${items.map((c) => { const p = parseCorpList(c.corpList)[0]; return `<tr><td>${esc(c.cntrctNm)}<div class="small muted">${esc(c.untyCntrctNo || '')} · ${esc(c.cntrctCnclsMthdNm || '')}</div></td><td>${p ? corpLink(p.bizno, p.name) : '-'}</td><td class="num">${won(c.totCntrctAmt)}</td><td class="nw">${pct(c.totCntrctAmt, n.asignBdgtAmt)}</td><td class="nw">${esc(dateOnly(c.cntrctCnclsDate))}</td><td class="nw small">${esc(c.cntrctPrd || [dateOnly(c.wbgnDate), dateOnly(c.ttalScmpltDate)].filter(Boolean).join(' ~ '))}</td><td class="nw">${ext(c.cntrctDtlInfoUrl, '계약 상세')}</td></tr>`; }).join('')}</tbody>
+        </table></div>${linkRow(items.slice(0, 3).map((c) => ['나라장터 계약 상세 · ' + (c.untyCntrctNo || ''), c.cntrctDtlInfoUrl || c.cntrctInfoUrl]))}`
+        : `<div class="tablewrap"><table><thead><tr><th>계약번호</th><th>계약명</th><th>계약기관</th><th>체결방법</th><th class="num">계약금액</th><th>계약일자</th></tr></thead><tbody>
+          ${list.map((c) => `<tr><td>${esc(c[1])}</td><td>${esc(c[2])}</td><td>${esc(c[3])}</td><td>${esc(c[5])}</td><td class="num">${won(c[6])}</td><td>${esc(c[7])}</td></tr>`).join('')}</tbody></table></div>${linkRow([['나라장터', G2B_HOME]])}`);
+    }
+  }
+
+  function bindCopy(root) {
+    $$('button[data-copy]', root).forEach((b) => b.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(b.dataset.copy); b.textContent = '복사됨'; } catch (e) { b.textContent = b.dataset.copy; }
+      setTimeout(() => { b.textContent = '번호 복사'; }, 1500);
+    }));
   }
 
   // =====================================================================
@@ -1394,6 +1608,9 @@
         ['계약정보서비스', () => g2b('cntrct', 'getCntrctInfoListServcPPSSrch', { inqryDiv: 1, inqryBgnDate: d, inqryEndDate: d, numOfRows: 1 })],
         ['사용자정보서비스', () => g2b('usr', 'getDminsttInfo02', { inqryDiv: 1, inqryBgnDt: d + '0000', inqryEndDt: d + '2359', numOfRows: 1 })],
         ['업종 및 근거법규서비스', () => g2b('ind', 'getIndstrytyBaseLawrgltInfoList', { numOfRows: 1 })],
+        ['사전규격정보서비스', () => g2b('pre', 'getPublicPrcureThngInfoServcPPSSrch', { inqryDiv: 1, inqryBgnDt: d + '0000', inqryEndDt: d + '2359', numOfRows: 1 })],
+        ['계약과정통합공개서비스', () => g2b('intg', 'getCntrctProcssIntgOpenServc', { inqryDiv: 1, bidNtceNo: 'R25BK00947937', numOfRows: 1 })],
+        ['낙찰정보서비스', () => g2b('scsbid', 'getScsbidListSttusServc', { inqryDiv: 2, inqryBgnDt: d + '0000', inqryEndDt: d + '2359', numOfRows: 1 })],
         ['법제처 법령해석', () => lawApi('list', { query: '계약', display: 1 })],
       ];
       const res = await Promise.allSettled(tests.map((t) => t[1]()));

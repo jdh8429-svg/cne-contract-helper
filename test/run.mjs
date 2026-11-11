@@ -107,6 +107,7 @@ console.log('서버 함수');
   ok(r3.status === 500 && JSON.parse(r3.text).code === 'NOKEY', '키 미설정 시 안내');
 }
 {
+  { const j = g2b.normalize(JSON.stringify({ OpenAPI_ServiceResponse: { cmmMsgHeader: { errMsg: 'SERVICE_KEY_IS_NOT_REGISTERED_ERROR', returnAuthMsg: '등록되지 않은 서비스키', returnReasonCode: '30' } } })); ok(!j.ok && j.code === '30', 'JSON 형식 인증키 오류도 오류로 처리'); }
   const n = g2b.normalize('<OpenAPI_ServiceResponse><cmmMsgHeader><errMsg>SERVICE ERROR</errMsg><returnAuthMsg>SERVICE_KEY_IS_NOT_REGISTERED_ERROR</returnAuthMsg><returnReasonCode>30</returnReasonCode></cmmMsgHeader></OpenAPI_ServiceResponse>');
   ok(!n.ok && n.code === '30' && /인증키/.test(n.msg), 'XML 인증키 오류 → 한글 안내');
   const n2 = g2b.normalize(JSON.stringify({ response: { header: { resultCode: '00' }, body: { items: { item: { a: 1 } }, totalCount: 1 } } }));
@@ -142,12 +143,12 @@ console.log('서버 함수');
   const r2 = await g2b.onRequestGet(ctx(U));
   ok(r2.headers.get('x-cache') === 'fresh' && calls.length === before + 1, '서버 캐시: 10분 안에는 호출 없이 바로 응답');
   // 11분 지난 것으로 만들기
-  const old = store.get(U); const body = await old.clone().text(); const h = new Headers(old.headers); h.set('x-fetched-at', String(Date.now() - 11 * 60e3));
-  store.set(U, new Response(body, { headers: h }));
+  const KU = U + '&_cv=2'; const old = store.get(KU); const body = await old.clone().text(); const h = new Headers(old.headers); h.set('x-fetched-at', String(Date.now() - 11 * 60e3));
+  store.set(KU, new Response(body, { headers: h }));
   const r3 = await g2b.onRequestGet(ctx(U));
   ok(r3.headers.get('x-cache') === 'stale' && JSON.parse(await r3.text()).items.length === 2, '서버 캐시: 오래된 결과를 기다림 없이 바로 응답');
   await Promise.all(waits);
-  ok(calls.length === before + 2 && Number(store.get(U).headers.get('x-fetched-at')) > Date.now() - 5000, '서버 캐시: 뒤에서 새로 받아 저장');
+  ok(calls.length === before + 2 && Number(store.get(KU).headers.get('x-fetched-at')) > Date.now() - 5000, '서버 캐시: 뒤에서 새로 받아 저장');
   delete globalThis.caches;
 }
 

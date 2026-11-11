@@ -90,6 +90,13 @@ export function normalize(text) {
     const msg = pick('returnAuthMsg') || pick('resultMsg') || pick('errMsg') || text.slice(0, 200);
     return { ok: false, code, msg: CODE_HINTS[code] || msg, raw: msg };
   }
+  // 인증키 오류가 JSON으로 오는 경우 {"OpenAPI_ServiceResponse":{"cmmMsgHeader":{"returnReasonCode":"30",...}}}
+  const cmm = data && data.OpenAPI_ServiceResponse && data.OpenAPI_ServiceResponse.cmmMsgHeader;
+  if (cmm) {
+    const code = String(cmm.returnReasonCode || 'AUTH');
+    const msg = cmm.returnAuthMsg || cmm.errMsg || '인증 오류';
+    return { ok: false, code, msg: CODE_HINTS[code] || msg, raw: msg };
+  }
   const resp = data.response || data;
   const header = (resp && resp.header) || findHeader(data) || {};
   const code = String(header.resultCode ?? header.code ?? '00');
@@ -139,7 +146,9 @@ export async function onRequestGet(context) {
   // 나라장터 검색 API는 한 번에 7~20초가 걸리므로, 받아 둔 결과를 하루 동안 보관하고
   // 10분(업종 6시간)이 지난 결과는 일단 바로 돌려준 뒤 뒤에서 새로 받아 둠 (stale-while-revalidate)
   const cache = typeof caches !== 'undefined' ? caches.default : null;
-  const cacheKey = new Request(url.toString(), { method: 'GET' });
+  // 캐시 규칙이 바뀌면 v 값을 올려 이전 캐시를 쓰지 않게 함
+  const ck = new URL(url.toString()); ck.searchParams.set('_cv', '2');
+  const cacheKey = new Request(ck.toString(), { method: 'GET' });
   const fresh = CACHE_SECONDS[svc] || 600;
   const KEEP = 86400;
 

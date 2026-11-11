@@ -959,6 +959,8 @@
   const kvRows = (rows) => `<dl class="kv">${rows.filter((r) => r[1] != null && r[1] !== '' && r[1] !== '-').map(([k, v, raw]) => `<dt>${esc(k)}</dt><dd>${raw ? v : esc(v)}</dd>`).join('')}</dl>`;
   const linkRow = (links) => { const l = links.filter((x) => x && x[1]); return l.length ? `<div class="flowlinks"><span class="small muted">조달청 연결</span>${l.map(([t, u]) => ext(u, t)).join('')}</div>` : ''; };
 
+  // 개찰일시가 지났는지
+  const openedPast = (n) => { const d = n.opengDt || n.bidClseDt; return !!d && new Date(String(d).replace(' ', 'T')) < new Date(); };
   function openFlow(n, sub, biz, step) {
     const st = { n, biz, step: step || '', intg: null, err: null, cache: {} };
     sub.innerHTML = `<div class="sub flow">${loading('계약과정을 불러오는 중…')}</div>`;
@@ -966,7 +968,7 @@
     g2b('intg', `getCntrctProcssIntgOpen${BIZ[biz]}`, { inqryDiv: 1, bidNtceNo: n.bidNtceNo, numOfRows: 10 })
       .then((r) => { st.intg = r.items[0] || {}; }, (e) => { st.intg = {}; st.err = e.message; })
       .then(() => {
-        if (!st.step) st.step = caretList(st.intg.bidwinrInfoList).length ? 'win' : 'bid';
+        if (!st.step) st.step = caretList(st.intg.bidwinrInfoList).length || openedPast(n) ? 'win' : 'bid';
         drawFlow(sub);
       });
   }
@@ -976,8 +978,9 @@
     if (key === 'plan') return g.orderPlanNo ? (g.orderYm || '있음') : '정보 없음';
     if (key === 'spec') return g.bfSpecRgstNo ? (dateOnly(g.opninRgstClseDt) ? '의견마감 ' + dateOnly(g.opninRgstClseDt) : g.bfSpecRgstNo) : '정보 없음';
     if (key === 'bid') return dateOnly(n.bidNtceDt) || '-';
-    if (key === 'win') { const w = caretList(g.bidwinrInfoList)[0]; return w ? (w[5] ? `낙찰률 ${w[5]}%` : w[1]) : (st.err ? '조회 필요' : '개찰 전·정보 없음'); }
-    if (key === 'cntrct') { const c = caretList(g.cntrctInfoList)[0]; return c ? (c[7] || '체결') : (st.err ? '조회 필요' : '정보 없음'); }
+    const opened = openedPast(n);
+    if (key === 'win') { const w = caretList(g.bidwinrInfoList)[0]; return w ? (w[5] ? `낙찰률 ${w[5]}%` : w[1]) : (opened ? '눌러서 확인' : '개찰 전'); }
+    if (key === 'cntrct') { const c = caretList(g.cntrctInfoList)[0]; return c ? (c[7] || '체결') : (opened ? '눌러서 확인' : '개찰 전'); }
     return '';
   }
 

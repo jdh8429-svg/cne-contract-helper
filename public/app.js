@@ -808,6 +808,7 @@
         </form>
         ${S.ind ? `<p class="small" style="margin:10px 0 0">업종 조건: <span class="badge blue">${esc(S.ind)} ${esc(indIt ? indIt.nm : '')}</span> <a href="${esc(hashOf('similar', S.q))}">업종 조건 빼기</a></p>` : ''}
         <p class="small muted" style="margin:10px 0 0">전국 모든 기관의 입찰공고에서 찾습니다. 한 번에 최대 1년까지 조회할 수 있고, 기간이 길수록 오래 걸립니다 (과거 기간도 조회 가능).</p>
+        <p class="small" style="margin:6px 0 0;color:var(--navy-2)">결과의 <strong>'계약과정 한눈에'</strong>를 누르면 그 공고의 발주계획 · 사전규격 · 입찰공고 · 낙찰 · 계약 정보를 단계별로 볼 수 있습니다.</p>
       </section>
       <div class="row" style="align-items:flex-start">
         <div id="slist" style="flex:3 1 480px;min-width:0;display:flex;flex-direction:column;gap:12px"></div>
@@ -872,7 +873,7 @@
         ${docChips(noticeDocs(n))}
         <div class="btns" style="margin-top:12px">
           <button type="button" class="btn sm" data-act="eorder" data-i="${i}">e발주 문서(제안요청서 등)</button>
-          <button type="button" class="btn sm" data-act="flow" data-i="${i}" aria-expanded="false">계약과정 한눈에</button>
+          <button type="button" class="btn sm" data-act="flow" data-i="${i}" aria-expanded="false" title="발주계획 · 사전규격 · 입찰공고 · 낙찰 · 계약 정보 보기">계약과정 한눈에</button>
           <button type="button" class="btn sm" data-act="save" data-i="${i}">보관함에 저장</button>
         </div>
         <div id="ssub-${i}"></div>

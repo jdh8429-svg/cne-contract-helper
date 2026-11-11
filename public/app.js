@@ -44,20 +44,25 @@
   // 오늘 기준 최근 n개월 시작일 (예: 11/2 → 10/3) — 1개월 조회가 한 번의 호출로 끝나도록
   const monthsAgo = (n) => iso(addDays(addMonths(today(), -n), 1));
 
-  // 나라장터 계약·입찰공고 검색 API는 한 번에 최대 7일까지만 조회됨 (2026년 11월 확인, 과거 날짜는 제한 없음)
-  const CHUNK_DAYS = 7;
-  // 화면별 최대 조회 기간 (7일 단위로 나눠 호출하므로 길수록 호출 수·시간이 늘어남)
-  const MAX_DAYS = { contract: 92, notice: 92, similar: 183 };
+  // 나라장터 계약·입찰공고 검색 API의 한 번 조회 가능 기간.
+  // 개발계정에서는 7일까지만 허용됐음(2026.11). 운영계정은 먼저 31일 단위로 시도하고,
+  // 거절(07)되면 그 브라우저에서 하루 동안 7일 단위로 바꿔 조회함.
+  const CHUNK_TRY = 31, CHUNK_SAFE = 7, CONC = 6;
+  const chunkDays = (svc) => { const v = store.get('cne.chunk.' + svc, null); return v && Date.now() - v.t < 86400e3 ? v.d : CHUNK_TRY; };
+  const setChunk = (svc, d) => store.set('cne.chunk.' + svc, { t: Date.now(), d });
+  const CHUNK_DAYS = CHUNK_SAFE;
+  // 화면별 최대 조회 기간 (운영계정 하루 호출량이 넉넉해 1년까지)
+  const MAX_DAYS = { contract: 366, notice: 366, similar: 366 };
   const daysBetween = (a, b) => Math.round((new Date(b + 'T00:00:00') - new Date(a + 'T00:00:00')) / 864e5) + 1;
   function checkRange(from, to, maxDays) {
     if (!from || !to) return '조회 기간을 입력하세요.';
     if (from > to) return '시작일이 끝일보다 늦습니다.';
     if (to > iso(today())) return '끝일은 오늘 이후로 정할 수 없습니다.';
     const d = daysBetween(from, to);
-    if (d > maxDays) return `한 번에 최대 ${Math.round(maxDays / 30.5)}개월(${maxDays}일)까지 조회할 수 있습니다. 지금 ${d}일입니다.`;
+    if (d > maxDays) return `한 번에 최대 ${maxDays >= 365 ? '1년' : Math.round(maxDays / 30.5) + '개월'}(${maxDays}일)까지 조회할 수 있습니다. 지금 ${d}일입니다.`;
     return null;
   }
-  // 끝 날짜부터 거꾸로 7일씩 나눔 → '최근 7일' 구간이 화면끼리 겹쳐 다시 호출하지 않음
+  // 끝 날짜부터 거꾸로 n일씩 나눔 → 가장 최근 구간이 화면끼리 겹쳐 다시 호출하지 않음
   function rangeChunks(fromIso, toIso, days) {
     const n = days || CHUNK_DAYS;
     const out = [];
@@ -167,7 +172,8 @@
         r = await g2b(svc, op, Object.assign({}, params, { numOfRows: sizes[si], pageNo: page }));
       } catch (e) {
         // 한 번에 받을 수 있는 건수를 넘었다면 더 작은 단위로 다시 시도
-        if (e.code === '07' && page === 1 && si < sizes.length - 1) { si++; page = 0; continue; }
+        // (기간이 7일보다 길면 07은 기간 초과로 보고 바로 넘김 → 아래 g2bByRange가 7일씩 다시 나눔)
+        if (e.code === '07' && page === 1 && si < sizes.length - 1 && !((opts && opts.rangeDays) > CHUNK_SAFE)) { si++; page = 0; continue; }
         throw e;
       }
       total = r.totalCount || total;
@@ -177,23 +183,39 @@
     }
     return { items: items.slice(0, max), totalCount: total, truncated: total > max, stale };
   }
-  // 기간을 7일씩 나눠 4개씩 동시에 조회해 합침. 혹시 7일도 길다고 거절되면 그 구간만 반으로 나눠 다시 조회.
+  // 기간을 31일(거절되면 7일)씩 나눠 6개씩 동시에 조회해 합침. 7일도 길다고 거절되면 그 구간만 반으로 나눠 다시 조회.
   // dateStyle 'date' = 계약(inqryBgnDate, YYYYMMDD), 'dt' = 입찰공고(inqryBgnDt, YYYYMMDDHHMM)
   async function g2bByRange(svc, op, params, fromIso, toIso, opts) {
     const o = opts || {};
     const mk = (f, t) => (o.dateStyle === 'date' ? { inqryBgnDate: ymd(f), inqryEndDate: ymd(t) } : { inqryBgnDt: ymd(f) + '0000', inqryEndDt: ymd(t) + '2359' });
+    let done = 0, total = 0;
+    const tick = () => { done++; if (o.progress) o.progress(done, total); };
+    const merge = (list) => ({ items: [].concat(...list.map((x) => x.items)), totalCount: list.reduce((a, x) => a + x.totalCount, 0), truncated: list.some((x) => x.truncated), stale: list.some((x) => x.stale) });
     const run = async (f, t) => {
+      const d = daysBetween(f, t);
       try {
-        return await g2bAll(svc, op, Object.assign({}, params, mk(f, t)), o);
+        return await g2bAll(svc, op, Object.assign({}, params, mk(f, t)), Object.assign({}, o, { rangeDays: d }));
       } catch (e) {
-        const d = daysBetween(f, t);
         if (e.code !== '07' || d < 2) throw e;
+        if (d > CHUNK_SAFE) {
+          // 31일이 거절됨 → 이 브라우저는 하루 동안 7일 단위로 조회
+          setChunk(svc, CHUNK_SAFE);
+          const parts = rangeChunks(f, t, CHUNK_SAFE);
+          total += parts.length - 1;
+          const rs = await pool(parts.map((ch) => async () => { const r = await run(ch.from, ch.to); return r; }), CONC);
+          const bad = rs.find((r) => r.status === 'rejected');
+          if (bad) throw bad.reason;
+          rs.slice(0, -1).forEach(tick);
+          return merge(rs.map((r) => r.value));
+        }
         const mid = iso(addDays(new Date(f + 'T00:00:00'), Math.floor(d / 2) - 1));
         const [x, y] = await Promise.all([run(f, mid), run(iso(addDays(new Date(mid + 'T00:00:00'), 1)), t)]);
-        return { items: x.items.concat(y.items), totalCount: x.totalCount + y.totalCount, truncated: x.truncated || y.truncated, stale: x.stale || y.stale };
+        return merge([x, y]);
       }
     };
-    const res = await pool(rangeChunks(fromIso, toIso).map((ch) => () => run(ch.from, ch.to)), 4);
+    const chunks = rangeChunks(fromIso, toIso, chunkDays(svc));
+    total = chunks.length;
+    const res = await pool(chunks.map((ch) => async () => { try { return await run(ch.from, ch.to); } finally { tick(); } }), CONC);
     const out = { items: [], totalCount: 0, truncated: false, stale: false, failed: 0 };
     let firstErr = null;
     res.forEach((r) => {
@@ -218,6 +240,9 @@
 
   // ---------- 화면 조각 ----------
   const loading = (t) => `<div class="loading">${esc(t || '불러오는 중…')}</div>`;
+  // 여러 구간으로 나눠 조회할 때 진행 상황 표시
+  const progressIn = (box, label) => (d, t) => { const l = box && box.querySelector('.loading'); if (l && t > 1) l.textContent = `${label} (${Math.min(d, t)}/${t} 구간 완료)`; };
+  const chunkNote = (svc, from, to) => { const n = rangeChunks(from, to, chunkDays(svc)).length; return n > 1 ? `${n}개 구간으로 나눠 조회` : '한 번에 조회'; };
   const errBox = (m) => `<div class="err">${esc(m)}</div>`;
   const empty = (m) => `<div class="empty">${esc(m || '조회 결과가 없습니다.')}</div>`;
   const ext = (href, label) => (href ? `<a href="${esc(href)}" target="_blank" rel="noopener">${esc(label || '나라장터')} ↗</a>` : '');
@@ -388,13 +413,13 @@
           <label class="grow">계약명<input type="text" name="q" value="${esc(C.q)}" placeholder="계약명 일부 입력 (비우면 전체)"></label>
           <button class="btn primary" type="submit">조회</button>
         </form>
-        <p class="small muted" style="margin:10px 0 0">${esc(settings.insttDivCd === '2' ? '수요기관' : '계약기관')}: ${esc(settings.insttNm)} · 기관은 설정에서 바꿀 수 있습니다. · 한 번에 최대 3개월까지 조회 (기간이 길수록 오래 걸립니다)</p>
+        <p class="small muted" style="margin:10px 0 0">${esc(settings.insttDivCd === '2' ? '수요기관' : '계약기관')}: ${esc(settings.insttNm)} · 기관은 설정에서 바꿀 수 있습니다. · 한 번에 최대 1년까지 조회 (기간이 길수록 오래 걸립니다)</p>
         <div id="clist" style="margin-top:12px"></div>
       </section>
       <section class="card" id="cdetail" hidden></section>
       <section class="card">
         <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;flex-wrap:wrap">
-          <h2>우리 기관 최근 계약 <span class="small muted" style="font-weight:400">최근 7일</span></h2>
+          <h2>우리 기관 최근 계약 <span class="small muted" style="font-weight:400" id="crlabel">${recentLabel()}</span></h2>
           <button type="button" class="btn sm" id="crefresh">새로 불러오기</button>
         </div>
         <div id="crecent"></div>
@@ -420,13 +445,13 @@
     return true;
   }
 
-  // 우리 기관 계약 조회 (7일씩 나눠 조회). 목록·최근 계약이 같은 모양으로 요청해 같은 구간은 한 번만 호출됨
-  function contractQuery(biz, from, to, mthd, q) {
+  // 우리 기관 계약 조회 (기간을 나눠 조회). 목록·최근 계약이 같은 모양으로 요청해 같은 구간은 한 번만 호출됨
+  function contractQuery(biz, from, to, mthd, q, progress) {
     return g2bByRange('cntrct', `getCntrctInfoList${BIZ[biz]}PPSSrch`, {
       inqryDiv: 1, insttDivCd: settings.insttDivCd, insttNm: settings.insttNm, cntrctMthdCd: mthd || '',
       // 공사는 검색 항목 이름이 '공사명(cnstwkNm)'
       [biz === '공사' ? 'cnstwkNm' : 'cntrctNm']: q || '',
-    }, from, to, { dateStyle: 'date', max: 2000 }).then((r) => {
+    }, from, to, { dateStyle: 'date', max: 3000, progress }).then((r) => {
       // 구간 경계에서 같은 계약이 두 번 오는 경우 대비
       const seen = new Set();
       r.items = r.items.filter((x) => { const k = x.untyCntrctNo || JSON.stringify(x); if (seen.has(k)) return false; seen.add(k); return true; });
@@ -445,10 +470,10 @@
       C.snapErr = null;
       const s = snap.get(key);
       if (s) { C.data = { items: s.items, totalCount: s.total, truncated: s.trunc }; C.snapAt = s.t; applyContractSel(false); }
-      else { C.data = null; C.snapAt = null; box.innerHTML = loading(`나라장터에서 계약 목록을 받는 중… (7일씩 ${rangeChunks(C.from, C.to).length}번 나눠 조회 · 처음엔 10~30초 걸릴 수 있습니다)`); }
+      else { C.data = null; C.snapAt = null; box.innerHTML = loading(`나라장터에서 계약 목록을 받는 중… (${chunkNote('cntrct', C.from, C.to)} · 처음엔 10~30초 걸릴 수 있습니다)`); }
     }
     try {
-      const r = await contractQuery(C.biz, C.from, C.to, C.mthd, C.q);
+      const r = await contractQuery(C.biz, C.from, C.to, C.mthd, C.q, progressIn(box, '나라장터에서 계약 목록을 받는 중…'));
       if (my !== C.seq) return; // 더 최근 조회가 있으면 무시
       r.items.sort(byDateDesc('cntrctCnclsDate', 'cntrctDate', 'rgstDt'));
       C.data = r;
@@ -596,12 +621,15 @@
     } catch (e) { sub.innerHTML = `<div class="sub">${errBox(e.message)}</div>`; }
   }
 
+  // 최근 계약 기간 = 한 번에 조회되는 기간(31일 또는 7일) → 목록의 가장 최근 구간과 같아 다시 호출하지 않음
+  const recentDays = () => Math.min(chunkDays('cntrct'), 31);
+  const recentLabel = () => (recentDays() >= 28 ? '최근 1개월' : `최근 ${recentDays()}일`);
   async function loadRecent(opts) {
     const silent = opts && opts.silent;
     const box = $('#crecent');
     if (!box) return;
     const bizs = (settings.bizs && settings.bizs.length ? settings.bizs : DEFAULTS.bizs).slice(0, 4);
-    const from = iso(addDays(today(), -(CHUNK_DAYS - 1))), to = iso(today());
+    const from = recentDays() >= 28 ? monthsAgo(1) : iso(addDays(today(), -(recentDays() - 1))), to = iso(today());
     const key = ['recent', bizs.join(','), from, to, settings.insttDivCd, settings.insttNm].join('|');
     const my = ++C.rseq;
     if (!silent) {
@@ -629,11 +657,11 @@
     const box = $('#crecent');
     if (!box) return;
     if (C.recentErr) { box.innerHTML = errBox(C.recentErr); return; }
-    if (!C.recent.length) { box.innerHTML = empty('최근 7일 계약이 없습니다.'); return; }
+    if (!C.recent.length) { box.innerHTML = empty(`${recentLabel()} 계약이 없습니다.`); return; }
     box.innerHTML = `<div class="tablewrap"><table>
       <thead><tr><th>업무</th><th>계약명</th><th>업체</th><th class="nw">총계약금액</th><th>계약일</th><th>바로가기</th></tr></thead>
       <tbody>${C.recent.map((c) => { const p = parseCorpList(c.corpList)[0]; return `<tr><td class="nw">${esc(c._biz)}</td><td>${esc(c.cntrctNm)}</td><td><span class="corpname" style="display:inline-block">${esc(p ? p.name : '-')}</span></td><td class="num">${won(c.totCntrctAmt || c.thtmCntrctAmt)}</td><td class="nw">${esc(dateOnly(c.cntrctCnclsDate))}</td><td class="nw">${ext(c.cntrctDtlInfoUrl || c.cntrctInfoUrl)}</td></tr>`; }).join('')}</tbody>
-    </table></div><p class="small muted" style="margin:8px 0 0">최근 7일 · ${esc(settings.bizs.join(', '))} 업무 기준${C.recentAt ? ` · ${esc(agoText(C.recentAt))} 저장된 목록 (최신 정보 확인 중…)` : ''}</p>`;
+    </table></div><p class="small muted" style="margin:8px 0 0">${recentLabel()} · ${esc(settings.bizs.join(', '))} 업무 기준${C.recentAt ? ` · ${esc(agoText(C.recentAt))} 저장된 목록 (최신 정보 확인 중…)` : ''}</p>`;
   }
 
   // =====================================================================
@@ -757,7 +785,7 @@
   // 3. 유사사업 찾기
   // =====================================================================
   const S = { q: '', ind: '', biz: '용역', from: monthsAgo(1), to: iso(today()), doc: '전체', items: null, err: null, seq: 0, key: '', failed: 0 };
-  const PRESETS = [['1', '최근 1개월'], ['3', '최근 3개월'], ['6', '최근 6개월']];
+  const PRESETS = [['1', '최근 1개월'], ['3', '최근 3개월'], ['6', '최근 6개월'], ['12', '최근 1년']];
   const presetOf = (from, to) => { if (to !== iso(today())) return ''; const p = PRESETS.find(([m]) => monthsAgo(Number(m)) === from); return p ? p[0] : ''; };
 
   function renderSimilar(view, arg, params) {
@@ -777,7 +805,7 @@
           <button class="btn primary" type="submit">유사사업 검색</button>
         </form>
         ${S.ind ? `<p class="small" style="margin:10px 0 0">업종 조건: <span class="badge blue">${esc(S.ind)} ${esc(indIt ? indIt.nm : '')}</span> <a href="${esc(hashOf('similar', S.q))}">업종 조건 빼기</a></p>` : ''}
-        <p class="small muted" style="margin:10px 0 0">전국 모든 기관의 입찰공고에서 찾습니다. 한 번에 최대 6개월까지 조회할 수 있고, 기간이 길수록 오래 걸립니다 (과거 기간도 조회 가능).</p>
+        <p class="small muted" style="margin:10px 0 0">전국 모든 기관의 입찰공고에서 찾습니다. 한 번에 최대 1년까지 조회할 수 있고, 기간이 길수록 오래 걸립니다 (과거 기간도 조회 가능).</p>
       </section>
       <div class="row" style="align-items:flex-start">
         <div id="slist" style="flex:3 1 480px;min-width:0;display:flex;flex-direction:column;gap:12px"></div>
@@ -801,14 +829,14 @@
   }
 
   async function searchSimilar() {
-    $('#slist').innerHTML = loading(`유사사업을 찾는 중… (${S.from} ~ ${S.to}, 7일씩 ${rangeChunks(S.from, S.to).length}번 나눠 조회)`);
+    $('#slist').innerHTML = loading(`유사사업을 찾는 중… (${S.from} ~ ${S.to}, ${chunkNote('bid', S.from, S.to)})`);
     $('#ssum').innerHTML = '';
     S.err = null;
     const my = ++S.seq;
     let found = [];
     try {
-      // 공고명으로 서버에서 걸러 받으므로 결과가 적음 → 7일 구간당 보통 1번 호출
-      const r = await g2bByRange('bid', `getBidPblancListInfo${BIZ[S.biz]}PPSSrch`, { inqryDiv: 1, bidNtceNm: S.q, indstrytyCd: S.ind }, S.from, S.to, { max: 500 });
+      // 공고명으로 서버에서 걸러 받으므로 결과가 적음 → 구간당 보통 1번 호출
+      const r = await g2bByRange('bid', `getBidPblancListInfo${BIZ[S.biz]}PPSSrch`, { inqryDiv: 1, bidNtceNm: S.q, indstrytyCd: S.ind }, S.from, S.to, { max: 999, progress: progressIn($('#slist'), '유사사업을 찾는 중…') });
       found = r.items;
       S.failed = r.failed;
       S.err = null;
@@ -893,7 +921,7 @@
   // =====================================================================
   // 4. 공고 준비 · 확인
   // =====================================================================
-  const N = { from: iso(addDays(today(), -13)), to: iso(today()), q: '', items: null, err: null, sel: null, want: null, seq: 0 };
+  const N = { from: monthsAgo(1), to: iso(today()), q: '', items: null, err: null, sel: null, want: null, seq: 0 };
 
   function renderNotice(view, arg, params) {
     N.want = params.n || null;
@@ -930,7 +958,7 @@
     const my = ++N.seq;
     const instKey = settings.insttDivCd === '2' ? 'dminsttNm' : 'ntceInsttNm';
     const res = await Promise.allSettled(settings.bizs.map((b) =>
-      g2bByRange('bid', `getBidPblancListInfo${BIZ[b]}PPSSrch`, { inqryDiv: 1, [instKey]: settings.insttNm, bidNtceNm: N.q }, N.from, N.to, { max: 1000 })
+      g2bByRange('bid', `getBidPblancListInfo${BIZ[b]}PPSSrch`, { inqryDiv: 1, [instKey]: settings.insttNm, bidNtceNm: N.q }, N.from, N.to, { max: 1000, progress: b === settings.bizs[0] ? progressIn(box, '공고를 불러오는 중…') : null })
         .then((r) => r.items.map((x) => Object.assign({ _biz: b }, x)))));
     if (my !== N.seq) return;
     const map = new Map();

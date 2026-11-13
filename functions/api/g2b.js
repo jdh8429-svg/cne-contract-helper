@@ -11,6 +11,8 @@ const BASES = {
   pre: 'https://apis.data.go.kr/1230000/ao/HrcspSsstndrdInfoService',
   intg: 'https://apis.data.go.kr/1230000/ao/CntrctProcssIntgOpenService',
   scsbid: 'https://apis.data.go.kr/1230000/as/ScsbidInfoService',
+  shop: 'https://apis.data.go.kr/1230000/at/ShoppingMallPrdctInfoService',
+  thng: 'https://apis.data.go.kr/1230000/ao/ThngListInfoService02',
 };
 const B4 = ['Thng', 'Cnstwk', 'Servc', 'Frgcpt'];
 
@@ -38,6 +40,10 @@ const OPS = {
   // 계약과정 통합공개: 공고번호 하나로 발주계획~계약
   intg: B4.map((b) => `getCntrctProcssIntgOpen${b}`),
   // 낙찰정보: 최종낙찰 · 개찰결과 · 예비가격 · 개찰순위
+  // 나라장터 쇼핑몰 품목정보: 상품 · 단가계약 품목 · 납품요구 · 특정품목 조달내역
+  shop: ['getShoppingMallPrdctInfoList', 'getMASCntrctPrdctInfoList', 'getUcntrctPrdctInfoList', 'getThptyUcntrctPrdctInfoList', 'getDlvrReqInfoList', 'getDlvrReqDtlInfoList', 'getSpcifyPrdlstPrcureInfoList', 'getSpcifyPrdlstPrcureTotList'],
+  // 물품목록정보: 품명 · 품목 · 소재지 · 품목 속성 · 분류 단위
+  thng: ['getThngPrdnmLocplcAccotListInfoInfoPrdnmSearch02', 'getThngPrdnmLocplcAccotListInfoInfoPrdlstSearch02', 'getThngPrdnmLocplcAccotListInfoInfoLocplcSearch02', 'getPrdctIndvAtrbInfoList02', 'getPrdctClsfcNoUnit8Info02', 'getPrdctClsfcNoUnit10Info02', 'getThngGuidanceMapInfo02'],
   scsbid: B4.flatMap((b) => [`getScsbidListSttus${b}`, `getScsbidListSttus${b}PPSSrch`, `getOpengResultListInfo${b}`, `getOpengResultListInfo${b}PreparPcDetail`]).concat(['getOpengResultListInfoOpengCompt']),
 };
 

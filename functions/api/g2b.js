@@ -38,7 +38,7 @@ const OPS = {
   // 계약과정 통합공개: 공고번호 하나로 발주계획~계약
   intg: B4.map((b) => `getCntrctProcssIntgOpen${b}`),
   // 낙찰정보: 최종낙찰 · 개찰결과 · 예비가격 · 개찰순위
-  scsbid: B4.flatMap((b) => [`getScsbidListSttus${b}`, `getOpengResultListInfo${b}`, `getOpengResultListInfo${b}PreparPcDetail`]).concat(['getOpengResultListInfoOpengCompt']),
+  scsbid: B4.flatMap((b) => [`getScsbidListSttus${b}`, `getScsbidListSttus${b}PPSSrch`, `getOpengResultListInfo${b}`, `getOpengResultListInfo${b}PreparPcDetail`]).concat(['getOpengResultListInfoOpengCompt']),
 };
 
 // 업종 목록처럼 자주 바뀌지 않는 데이터는 더 오래 캐시

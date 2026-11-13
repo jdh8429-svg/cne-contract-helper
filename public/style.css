@@ -145,3 +145,6 @@ dl.kv dd{margin:0;min-width:0;overflow-wrap:anywhere}
 .op p{margin:6px 0;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
 tr.hl td{background:#F2F6FB}
 @media (max-width:640px){.steps{grid-template-columns:repeat(2,minmax(0,1fr))}.steps li:last-child{grid-column:1/-1}.op.reply{margin-left:8px}}
+
+/* 낙찰업체 표시 (유사사업 찾기 결과) */
+.winline{margin-top:8px;font-size:13px;padding:6px 10px;border-radius:8px;background:var(--soft);display:flex;flex-wrap:wrap;gap:4px 6px;align-items:center}

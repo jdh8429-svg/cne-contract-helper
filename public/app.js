@@ -399,6 +399,20 @@
   }
   const indLink = (it) => `<a href="${esc(hashOf('law', '', { tab: 'ind', ind: it.cd }))}">${esc(it.law ? `${it.law} ${it.art}`.trim() : '근거법규 보기')}</a>`;
 
+  // 업체 소재지: 충남 여부와 짧은 표기 (예: '충청남도 공주시 반포면 …' → '충남 공주시')
+  const isCN = (addr) => /^\s*(충청남도|충남)/.test(String(addr || ''));
+  const SIDO = { 충청남도: '충남', 충청북도: '충북', 서울특별시: '서울', 부산광역시: '부산', 대구광역시: '대구', 인천광역시: '인천', 광주광역시: '광주', 대전광역시: '대전', 울산광역시: '울산', 세종특별자치시: '세종', 경기도: '경기', 강원특별자치도: '강원', 강원도: '강원', 전북특별자치도: '전북', 전라북도: '전북', 전라남도: '전남', 경상북도: '경북', 경상남도: '경남', 제주특별자치도: '제주' };
+  const rgnShort = (addr) => { const t = String(addr || '').trim().split(/\s+/); if (!t[0]) return ''; return [SIDO[t[0]] || t[0], t[1] && /[시군구]$/.test(t[1]) ? t[1] : ''].filter(Boolean).join(' '); };
+  const rgnBadge = (addr) => (addr ? `<span class="badge ${isCN(addr) ? 'grn' : ''}">${esc(rgnShort(addr))}</span>` : '');
+  // 사업자번호 → 업체 소재지 (사용자정보서비스, 메모리 캐시)
+  const corpRgnMemo = new Map();
+  function corpRegion(bizno) {
+    const b = String(bizno || '').replace(/\D/g, '');
+    if (b.length !== 10) return Promise.resolve('');
+    if (!corpRgnMemo.has(b)) corpRgnMemo.set(b, g2b('usr', 'getPrcrmntCorpBasicInfo02', { inqryDiv: 3, bizno: b, numOfRows: 1 }).then((r) => { const it = r.items[0] || {}; return it.rgnNm || it.adrs || ''; }, () => ''));
+    return corpRgnMemo.get(b);
+  }
+
   // =====================================================================
   // 1. 계약 관리
   // =====================================================================
@@ -677,6 +691,58 @@
   // =====================================================================
   const K = { bizno: '', data: null, err: null, seq: 0 };
 
+  // 충남 업체 낙찰 실적 (낙찰정보서비스의 최종낙찰업체 주소로 거름)
+  const KR = { biz: '용역', from: monthsAgo(1), to: iso(today()), q: '', items: null, total: 0, err: null, seq: 0, open: '', sido: '' };
+  async function searchCnWin() {
+    const box = $('#cnlist');
+    box.innerHTML = loading(`낙찰 결과를 받는 중… (${chunkNote('scsbid', KR.from, KR.to)})`);
+    const my = ++KR.seq;
+    try {
+      const r = await g2bByRange('scsbid', `getScsbidListSttus${BIZ[KR.biz]}`, { inqryDiv: 3 }, KR.from, KR.to, { max: 6000, progress: progressIn(box, '낙찰 결과를 받는 중…') });
+      if (my !== KR.seq) return;
+      const m = new Map();
+      r.items.forEach((w) => { const k = w.bidNtceNo + '|' + w.bidClsfcNo; const p = m.get(k); if (!p || String(w.bidNtceOrd) + w.rbidNo > String(p.bidNtceOrd) + p.rbidNo) m.set(k, w); });
+      const all = Array.from(m.values());
+      KR.total = all.length; KR.items = all.filter((w) => isCN(w.bidwinnrAdrs)); KR.err = null; KR.truncated = r.truncated;
+    } catch (e) { if (my === KR.seq) { KR.err = e.message; KR.items = null; } }
+    if (my === KR.seq) drawCnWin();
+  }
+  function drawCnWin() {
+    const box = $('#cnlist');
+    if (!box) return;
+    if (KR.err) { box.innerHTML = errBox(KR.err); return; }
+    if (!KR.items) { box.innerHTML = ''; return; }
+    const q = KR.q;
+    const items = KR.items.filter((w) => !q || [w.dminsttNm, w.bidNtceNm].some((v) => String(v || '').includes(q)));
+    const sigs = Array.from(new Set(KR.items.map((w) => rgnShort(w.bidwinnrAdrs)))).sort();
+    const list = KR.sido ? items.filter((w) => rgnShort(w.bidwinnrAdrs) === KR.sido) : items;
+    const by = new Map();
+    list.forEach((w) => {
+      const b = String(w.bidwinnrBizno || '').replace(/\D/g, '') || w.bidwinnrNm;
+      const g = by.get(b) || { bizno: b, nm: w.bidwinnrNm, adrs: w.bidwinnrAdrs, cnt: 0, sum: 0, rates: [], last: '', list: [] };
+      g.cnt++; g.sum += num(w.sucsfbidAmt); if (num(w.sucsfbidRate)) g.rates.push(num(w.sucsfbidRate));
+      const d = String(w.rlOpengDt || ''); if (d > g.last) g.last = d; g.list.push(w); by.set(b, g);
+    });
+    const groups = Array.from(by.values()).sort((a, b) => b.cnt - a.cnt || b.sum - a.sum);
+    const total = list.reduce((a, w) => a + num(w.sucsfbidAmt), 0);
+    box.innerHTML = `
+      <div style="display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <p class="small" style="margin:0">${esc(KR.from)} ~ ${esc(KR.to)} ${esc(KR.biz)} 낙찰 <strong>${KR.total.toLocaleString()}건</strong> 중 충남 업체 <strong>${KR.items.length.toLocaleString()}건</strong>${q ? ` → '${esc(q)}' ${items.length}건` : ''} · 업체 ${groups.length}곳 · 낙찰금액 합계 ${won(total)}</p>
+        <label class="small" style="display:inline-flex;gap:6px;align-items:center">시·군<select id="cnsido"><option value="">충남 전체</option>${sigs.map((v) => `<option ${v === KR.sido ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></label>
+      </div>
+      ${KR.truncated ? '<p class="small" style="color:var(--red)">결과가 많아 일부 구간이 잘렸습니다. 기간을 줄여 보세요.</p>' : ''}
+      ${groups.length ? `<div class="tablewrap"><table>
+        <thead><tr><th>업체</th><th class="nw">소재지</th><th class="num">낙찰 건수</th><th class="num">낙찰금액 합계</th><th class="num">평균 낙찰률</th><th class="nw">최근 개찰</th><th></th></tr></thead>
+        <tbody>${groups.slice(0, 200).map((g) => `<tr><td>${corpLink(g.bizno, g.nm)}</td><td class="nw">${rgnBadge(g.adrs)}</td><td class="num">${g.cnt}</td><td class="num">${won(g.sum)}</td><td class="num">${g.rates.length ? (g.rates.reduce((a, b) => a + b, 0) / g.rates.length).toFixed(3) + '%' : '-'}</td><td class="nw">${esc(dateOnly(g.last))}</td><td class="nw"><button type="button" class="linkbtn small" data-cn="${esc(g.bizno)}" aria-expanded="${KR.open === g.bizno}">건별 보기</button></td></tr>
+          ${KR.open === g.bizno ? `<tr><td colspan="7" style="background:var(--soft)"><div class="tablewrap"><table><thead><tr><th>공고명</th><th>수요기관</th><th class="num">낙찰금액</th><th class="num">낙찰률</th><th class="nw">개찰일</th></tr></thead><tbody>${g.list.sort((a, b) => String(b.rlOpengDt).localeCompare(String(a.rlOpengDt))).map((w) => `<tr><td><a href="${esc(hashOf('similar', '', { biz: KR.biz, flow: w.bidNtceNo, step: 'win' }))}">${esc(w.bidNtceNm)}</a></td><td>${esc(w.dminsttNm || '')}</td><td class="num">${won(w.sucsfbidAmt)}</td><td class="num">${w.sucsfbidRate ? esc(w.sucsfbidRate) + '%' : '-'}</td><td class="nw">${esc(dateOnly(w.rlOpengDt))}</td></tr>`).join('')}</tbody></table></div><p class="small muted" style="margin:6px 0 0">공고명을 누르면 '계약과정 한눈에'의 낙찰 단계로 이동합니다.</p></td></tr>` : ''}`).join('')}</tbody>
+      </table></div>${groups.length > 200 ? '<p class="small muted">상위 200개 업체만 표시</p>' : ''}
+      <button type="button" class="btn" id="cncsv" style="margin-top:12px">충남 업체 낙찰 CSV 내보내기</button>` : empty('조건에 맞는 충남 업체 낙찰이 없습니다.')}`;
+    const sel = $('#cnsido'); if (sel) sel.addEventListener('change', () => { KR.sido = sel.value; drawCnWin(); });
+    $$('button[data-cn]', box).forEach((b) => b.addEventListener('click', () => { KR.open = KR.open === b.dataset.cn ? '' : b.dataset.cn; drawCnWin(); }));
+    const csv = $('#cncsv');
+    if (csv) csv.addEventListener('click', () => downloadCsv(`충남업체_낙찰_${KR.biz}_${KR.from}_${KR.to}.csv`, [['낙찰업체', '사업자번호', '소재지', '공고명', '수요기관', '낙찰금액', '낙찰률', '참가업체수', '개찰일시', '공고번호']].concat(list.map((w) => [w.bidwinnrNm, w.bidwinnrBizno, w.bidwinnrAdrs, w.bidNtceNm, w.dminsttNm, num(w.sucsfbidAmt), w.sucsfbidRate, w.prtcptCnum, w.rlOpengDt, w.bidNtceNo]))));
+  }
+
   function renderCorp(view, arg) {
     if (arg && /^\d{10}$/.test(arg) && arg !== K.bizno) { K.bizno = arg; K.data = null; }
     view.innerHTML = `
@@ -687,7 +753,29 @@
         </form>
         <p class="small muted" style="margin:10px 0 0">계약 관리 화면의 '업체 확인' 버튼을 누르면 자동으로 조회됩니다.</p>
       </section>
-      <div id="kresult" style="display:flex;flex-direction:column;gap:16px"></div>`;
+      <div id="kresult" style="display:flex;flex-direction:column;gap:16px"></div>
+      <section class="card" id="cnwin">
+        <h2>충남 업체 낙찰 실적 <span class="badge blue">시험</span></h2>
+        <form class="form" id="cnform">
+          <label>업무<select name="biz">${Object.keys(BIZ).map((b) => `<option ${b === KR.biz ? 'selected' : ''}>${b}</option>`).join('')}</select></label>
+          <label>개찰일 시작<input type="date" name="from" value="${esc(KR.from)}" max="${iso(today())}" required></label>
+          <label>개찰일 끝<input type="date" name="to" value="${esc(KR.to)}" max="${iso(today())}" required></label>
+          <label class="grow">수요기관 · 공고명 (선택)<input type="search" name="q" value="${esc(KR.q)}" placeholder="예: 교육청, 학교, 급식"></label>
+          <button class="btn primary" type="submit">충남 업체 낙찰 조회</button>
+        </form>
+        <p class="small muted" style="margin:10px 0 0">전국 낙찰 결과 중 낙찰업체 주소가 충청남도인 것만 모아 업체별로 보여 줍니다. 한 번에 최대 3개월.</p>
+        <div id="cnlist" style="margin-top:12px"></div>
+      </section>`;
+    $('#cnform').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const f = e.target;
+      const bad = checkRange(f.from.value, f.to.value, 92);
+      if (bad) { $('#cnlist').innerHTML = errBox(bad); return; }
+      const changed = f.biz.value !== KR.biz || f.from.value !== KR.from || f.to.value !== KR.to;
+      KR.biz = f.biz.value; KR.from = f.from.value; KR.to = f.to.value; KR.q = f.q.value.trim();
+      if (changed || !KR.items) searchCnWin(); else drawCnWin();
+    });
+    if (KR.items || KR.err) drawCnWin();
     $('#kform').addEventListener('submit', (e) => {
       e.preventDefault();
       const v = e.target.bizno.value.replace(/\D/g, '');
@@ -792,13 +880,14 @@
   // =====================================================================
   // 3. 유사사업 찾기
   // =====================================================================
-  const S = { flow: '', step: '', q: '', ind: '', biz: '용역', from: monthsAgo(1), to: iso(today()), doc: '전체', items: null, err: null, seq: 0, key: '', failed: 0 };
+  const S = { rgn: '', win: null, winKey: '', winErr: null, flow: '', step: '', q: '', ind: '', biz: '용역', from: monthsAgo(1), to: iso(today()), doc: '전체', items: null, err: null, seq: 0, key: '', failed: 0 };
   const PRESETS = [['1', '최근 1개월'], ['3', '최근 3개월'], ['6', '최근 6개월'], ['12', '최근 1년']];
   const presetOf = (from, to) => { if (to !== iso(today())) return ''; const p = PRESETS.find(([m]) => monthsAgo(Number(m)) === from); return p ? p[0] : ''; };
 
   function renderSimilar(view, arg, params) {
     const ind = params.ind || '';
     S.flow = params.flow || ''; S.step = params.step || '';
+    S.rgn = params.rgn === '충남' ? '충남' : '';
     if (params.biz && BIZ[params.biz]) S.biz = params.biz;
     const key = arg + '|' + ind;
     if (key !== S.key) { S.q = arg; S.ind = ind; S.key = key; S.items = null; S.err = null; }
@@ -811,6 +900,7 @@
           <label>기간<select name="preset">${PRESETS.map(([v, t]) => `<option value="${v}" ${presetOf(S.from, S.to) === v ? 'selected' : ''}>${t}</option>`).join('')}<option value="" ${presetOf(S.from, S.to) ? '' : 'selected'}>직접 입력</option></select></label>
           <label>공고일 시작<input type="date" name="from" value="${esc(S.from)}" max="${iso(today())}" required></label>
           <label>공고일 끝<input type="date" name="to" value="${esc(S.to)}" max="${iso(today())}" required></label>
+          <label>낙찰업체 지역<select name="rgn"><option value="" ${S.rgn ? '' : 'selected'}>전체</option><option value="충남" ${S.rgn ? 'selected' : ''}>충남 업체만</option></select></label>
           <label>문서 종류<select name="doc">${['전체', '제안요청서', '과업지시서', '규격서', '내역서'].map((v) => `<option ${S.doc === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
           <button class="btn primary" type="submit">유사사업 검색</button>
         </form>
@@ -830,9 +920,10 @@
       if (bad) { $('#slist').innerHTML = errBox(bad); return; }
       S.biz = f.biz.value; S.from = f.from.value; S.to = f.to.value; S.doc = f.doc.value; S.flow = ''; S.step = '';
       if (!q && !S.ind) return;
-      if (q !== S.q) { S.q = q; S.key = q + '|' + S.ind; S.items = null; go('similar', q, { ind: S.ind }); } else searchSimilar();
+      if (q !== S.q) { S.q = q; S.key = q + '|' + S.ind; S.items = null; go('similar', q, { ind: S.ind, rgn: S.rgn }); } else searchSimilar();
     });
     f.doc.addEventListener('change', (e) => { S.doc = e.target.value; drawSimilar(); });
+    f.rgn.addEventListener('change', (e) => { S.rgn = e.target.value; replaceHash('similar', S.q, { ind: S.ind, biz: S.biz, rgn: S.rgn }); drawSimilar(); });
     // 기간 빠른 선택 → 날짜 칸 채움, 날짜를 직접 바꾸면 '직접 입력'으로
     f.preset.addEventListener('change', () => { if (f.preset.value) { f.from.value = monthsAgo(Number(f.preset.value)); f.to.value = iso(today()); } });
     [f.from, f.to].forEach((el) => el.addEventListener('change', () => { f.preset.value = presetOf(f.from.value, f.to.value); }));
@@ -863,14 +954,36 @@
     drawSimilar();
   }
 
+  // 같은 검색 조건의 낙찰 결과(낙찰업체 주소 포함)를 받아 공고번호별로 정리
+  async function loadWinners() {
+    const key = [S.q, S.ind, S.biz, S.from, S.to].join('|');
+    if (S.winKey === key && (S.win || S.winErr)) return;
+    S.winKey = key; S.win = null; S.winErr = null;
+    try {
+      const r = await g2bByRange('scsbid', `getScsbidListSttus${BIZ[S.biz]}PPSSrch`, { inqryDiv: 1, bidNtceNm: S.q, indstrytyCd: S.ind }, S.from, S.to, { max: 999, progress: progressIn($('#slist'), '낙찰업체 소재지를 확인하는 중…') });
+      if (S.winKey !== key) return;
+      const m = new Map();
+      r.items.forEach((w) => { const p = m.get(w.bidNtceNo); if (!p || String(w.bidNtceOrd) + w.rbidNo > String(p.bidNtceOrd) + p.rbidNo) m.set(w.bidNtceNo, w); });
+      S.win = m;
+    } catch (e) { if (S.winKey === key) S.winErr = e.message; }
+  }
+
   function drawSimilar() {
     const list = $('#slist'), sum = $('#ssum');
     if (!list) return;
     if (S.err) { list.innerHTML = errBox(S.err); sum.innerHTML = ''; return; }
     if (!S.items && S.flow) S.items = [];
     if (!S.items) { list.innerHTML = `<div class="card">${empty('사업명 키워드를 입력하고 검색하세요.')}</div>`; sum.innerHTML = '<h2>금액 참고</h2><p class="small muted">검색하면 추정가격 통계가 표시됩니다.</p>'; return; }
-    const shown = S.items.filter((n) => S.doc === '전체' || noticeDocs(n).some((d) => d.kind === S.doc));
-    if (!shown.length) list.innerHTML = `<div class="card">${empty(S.doc === '전체' ? '검색 결과가 없습니다.' : `'${S.doc}'가 첨부된 공고가 없습니다.`)}</div>`;
+    // 낙찰업체 지역 필터: 낙찰 결과를 먼저 받아 온 뒤 다시 그림
+    if (S.rgn && S.items.length && S.winKey !== [S.q, S.ind, S.biz, S.from, S.to].join('|')) {
+      list.innerHTML = loading('낙찰업체 소재지를 확인하는 중…');
+      loadWinners().then(drawSimilar);
+      return;
+    }
+    if (S.rgn && S.winErr) { list.innerHTML = errBox('낙찰정보를 받지 못해 지역 필터를 적용할 수 없습니다: ' + S.winErr); return; }
+    const winOf = (n) => (S.win ? S.win.get(n.bidNtceNo) : null);
+    const shown = S.items.filter((n) => (S.doc === '전체' || noticeDocs(n).some((d) => d.kind === S.doc)) && (!S.rgn || isCN((winOf(n) || {}).bidwinnrAdrs)));
+    if (!shown.length) list.innerHTML = `<div class="card">${empty(S.rgn ? `이 조건에서 충남 업체가 낙찰받은 공고가 없습니다. (낙찰 ${S.win ? S.win.size : 0}건 확인)` : S.doc === '전체' ? '검색 결과가 없습니다.' : `'${S.doc}'가 첨부된 공고가 없습니다.`)}</div>`;
     else list.innerHTML = shown.slice(0, 60).map((n, i) => `
       <article class="result">
         <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px">
@@ -878,6 +991,7 @@
         </div>
         <div class="meta">${esc(n.dminsttNm || n.ntceInsttNm)} · 공고 ${esc(dateOnly(n.bidNtceDt))} · ${esc(n.cntrctCnclsMthdNm || '')} · ${esc(n.bidNtceNo)}</div>
         <div class="amts"><span>추정가격 <strong>${won(n.presmptPrce)}</strong></span><span>배정예산 <strong>${won(n.asignBdgtAmt)}</strong></span>${n.sucsfbidLwltRate ? `<span>낙찰하한율 <strong>${esc(n.sucsfbidLwltRate)}%</strong></span>` : ''}</div>
+        ${winOf(n) ? (() => { const w = winOf(n); return `<div class="winline">낙찰 <strong>${corpLink(w.bidwinnrBizno, w.bidwinnrNm)}</strong> ${rgnBadge(w.bidwinnrAdrs)} · ${won(w.sucsfbidAmt)}${w.sucsfbidRate ? ` · 낙찰률 ${esc(w.sucsfbidRate)}%` : ''}${w.prtcptCnum ? ` · ${esc(w.prtcptCnum)}개사 참가` : ''}</div>`; })() : ''}
         ${docChips(noticeDocs(n))}
         <div class="btns" style="margin-top:12px">
           <button type="button" class="btn sm" data-act="eorder" data-i="${i}">e발주 문서(제안요청서 등)</button>
@@ -894,12 +1008,12 @@
       if (b.dataset.act === 'cntrct') loadBidContract(n, sub, S.biz);
       if (b.dataset.act === 'flow') {
         // 같은 버튼을 다시 누르면 닫힘
-        if (sub._flow && sub._flow.n === n) { sub._flow = null; sub.innerHTML = ''; b.setAttribute('aria-expanded', 'false'); S.flow = ''; replaceHash('similar', S.q, { ind: S.ind, biz: S.biz }); return; }
+        if (sub._flow && sub._flow.n === n) { sub._flow = null; sub.innerHTML = ''; b.setAttribute('aria-expanded', 'false'); S.flow = ''; replaceHash('similar', S.q, { ind: S.ind, biz: S.biz, rgn: S.rgn }); return; }
         $$('button[data-act="flow"]', list).forEach((x) => x.setAttribute('aria-expanded', 'false'));
         b.setAttribute('aria-expanded', 'true');
         openFlow(n, sub, S.biz, n.bidNtceNo === S.flow ? S.step : '');
         S.flow = n.bidNtceNo; S.step = '';
-        replaceHash('similar', S.q, { ind: S.ind, biz: S.biz, flow: S.flow });
+        replaceHash('similar', S.q, { ind: S.ind, biz: S.biz, rgn: S.rgn, flow: S.flow });
       }
     }));
     // 주소에 열어 둔 공고(flow)·단계(step)가 있으면 그대로 펼침
@@ -930,9 +1044,11 @@
         <dt>추정가격 평균</dt><dd><strong>${won(avg)}</strong></dd>
         <dt>추정가격 최대</dt><dd><strong>${won(amts.length ? Math.max(...amts) : 0)}</strong></dd>
       </dl>
+      ${S.rgn && S.win ? (() => { const ws = Array.from(S.win.values()), cn = ws.filter((w) => isCN(w.bidwinnrAdrs)), rates = cn.map((w) => num(w.sucsfbidRate)).filter((v) => v > 0);
+        return `<h2 style="margin-top:18px">충남 업체 낙찰</h2><dl class="kv" style="grid-template-columns:1fr auto"><dt>낙찰 결과</dt><dd>${ws.length}건</dd><dt>그중 충남 업체</dt><dd><strong>${cn.length}건</strong> (${ws.length ? Math.round((cn.length / ws.length) * 100) : 0}%)</dd>${rates.length ? `<dt>충남 업체 평균 낙찰률</dt><dd>${(rates.reduce((a, b) => a + b, 0) / rates.length).toFixed(3)}%</dd>` : ''}</dl><p class="small muted" style="margin:6px 0 0">나라장터에 등록된 낙찰업체 주소 기준. 개찰 전 공고는 빠집니다.</p>`; })() : ''}
       <button type="button" class="btn" id="scsv" style="width:100%;margin-top:16px;justify-content:center">검색 결과 CSV 내보내기</button>`;
     $('#scsv').addEventListener('click', () => downloadCsv(`유사사업_${S.q || S.ind}_${iso(today())}.csv`,
-      [['공고명', '기관', '공고일', '계약방법', '추정가격', '배정예산', '공고번호', '나라장터']].concat(shown.map((n) => [n.bidNtceNm, n.dminsttNm || n.ntceInsttNm, dateOnly(n.bidNtceDt), n.cntrctCnclsMthdNm, num(n.presmptPrce), num(n.asignBdgtAmt), n.bidNtceNo, n.bidNtceDtlUrl || '']))));
+      [['공고명', '기관', '공고일', '계약방법', '추정가격', '배정예산', '공고번호', '나라장터', '낙찰업체', '낙찰업체 소재지', '낙찰금액', '낙찰률']].concat(shown.map((n) => { const w = winOf(n) || {}; return [n.bidNtceNm, n.dminsttNm || n.ntceInsttNm, dateOnly(n.bidNtceDt), n.cntrctCnclsMthdNm, num(n.presmptPrce), num(n.asignBdgtAmt), n.bidNtceNo, n.bidNtceDtlUrl || '', w.bidwinnrNm || '', w.bidwinnrAdrs || '', num(w.sucsfbidAmt) || '', w.sucsfbidRate || '']; }))));
   }
 
   async function loadEorder(n, sub) {
@@ -1008,7 +1124,7 @@
   // 지금 연 공고·단계를 주소에 남김 → 그대로 복사해 다른 사람에게 보내거나 새로고침해도 같은 화면
   function syncFlowHash(st) {
     S.flow = st.n.bidNtceNo; S.step = st.step;
-    replaceHash('similar', S.q, { ind: S.ind, biz: S.biz, flow: S.flow, step: S.step });
+    replaceHash('similar', S.q, { ind: S.ind, biz: S.biz, rgn: S.rgn, flow: S.flow, step: S.step });
   }
 
   async function drawStep(sub) {
@@ -1101,6 +1217,7 @@
       put(`${finErr ? `<p class="small" style="color:var(--red)">낙찰정보서비스 조회 실패(${esc(finErr)}) → 계약과정 통합정보로 표시합니다.</p>` : ''}
         ${kvRows(fin ? [
           ['최종낙찰업체', `<strong>${corpLink(fin.bidwinnrBizno, fin.bidwinnrNm)}</strong>${fin.bidwinnrBizno ? ` <span class="small muted">${esc(fin.bidwinnrBizno)} · 업체 확인으로 이동</span>` : ''}`, true],
+          ['소재지', fin.bidwinnrAdrs ? `${rgnBadge(fin.bidwinnrAdrs)} ${esc(fin.bidwinnrAdrs)}` : '', true],
           ['대표자', fin.bidwinnrCeoNm], ['최종낙찰금액', `<strong>${won(fin.sucsfbidAmt)}</strong>`, true], ['최종낙찰률', fin.sucsfbidRate ? fin.sucsfbidRate + '%' : ''],
           ['참가업체 수', fin.prtcptCnum ? fin.prtcptCnum + '개사' : ''], ['실개찰일시', dt(fin.rlOpengDt)], ['최종낙찰일자', dateOnly(fin.fnlSucsfDate)],
           ['차수', [fin.bidNtceOrd, fin.rbidNo && fin.rbidNo !== '000' ? '재입찰 ' + fin.rbidNo : ''].filter(Boolean).join(' · ')],
@@ -1110,11 +1227,12 @@
         ])}
         ${preps.length ? `<h4>예정가격 · 기초금액</h4>${kvRows([['기초금액', won(p0.bssamt)], ['예정가격', `<strong>${won(p0.plnprc)}</strong>`, true], ['예정가격/기초금액', pct(p0.plnprc, p0.bssamt)], ['예비가격', p0.totRsrvtnPrceNum ? `${p0.totRsrvtnPrceNum}개 중 추첨` : ''], ['낙찰자 선정기준', p0.bidwinrSlctnAplBssCntnts]])}
           <details><summary class="small">복수예비가격 ${preps.length}개 보기</summary><div class="tablewrap"><table><thead><tr><th>순번</th><th class="num">기초예정가격</th><th>추첨</th><th class="num">추첨 횟수</th></tr></thead><tbody>${preps.map((x) => `<tr${x.drwtYn === 'Y' ? ' class="hl"' : ''}><td>${esc(x.compnoRsrvtnPrceSno)}</td><td class="num">${won(x.bsisPlnprc)}</td><td>${x.drwtYn === 'Y' ? '<span class="badge blue">추첨</span>' : ''}</td><td class="num">${esc(x.drwtNum || '')}</td></tr>`).join('')}</tbody></table></div></details>` : ''}
-        <h4>개찰 순위 ${ranks.length ? `(${ranks.length}개사)` : ''}</h4>
-        ${rk.status === 'rejected' ? errBox('개찰순위 조회 실패: ' + rk.reason.message) : ranks.length ? `<div class="tablewrap"><table><thead><tr><th>순위</th><th>업체</th><th class="num">투찰금액</th><th class="num">투찰률</th>${nego ? '<th class="num">기술</th><th class="num">가격</th><th class="num">종합</th>' : ''}<th>비고</th></tr></thead><tbody>
-          ${ranks.slice(0, 30).map((r) => `<tr${/낙찰/.test(r.rmrk || '') ? ' class="hl"' : ''}><td>${esc(r.opengRank)}</td><td>${corpLink(r.prcbdrBizno, r.prcbdrNm)}</td><td class="num">${won(r.bidprcAmt)}</td><td class="num">${r.bidprcrt ? esc(r.bidprcrt) + '%' : '-'}</td>${nego ? `<td class="num">${esc(r.techEvlVal || '')}</td><td class="num">${esc(r.bidPrceEvlVal || '')}</td><td class="num">${esc(r.totalEvlAmtVal || '')}</td>` : ''}<td>${esc(r.rmrk || '')}</td></tr>`).join('')}
+        <h4 style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px;align-items:center">개찰 순위 ${ranks.length ? `(${ranks.length}개사)` : ''}${ranks.length ? '<label class="small" style="font-weight:400;display:inline-flex;gap:6px;align-items:center"><input type="checkbox" class="cnonly">충남 업체만</label>' : ''}</h4>
+        ${rk.status === 'rejected' ? errBox('개찰순위 조회 실패: ' + rk.reason.message) : ranks.length ? `<div class="tablewrap"><table class="ranktbl"><thead><tr><th>순위</th><th>업체</th><th class="nw">소재지</th><th class="num">투찰금액</th><th class="num">투찰률</th>${nego ? '<th class="num">기술</th><th class="num">가격</th><th class="num">종합</th>' : ''}<th>비고</th></tr></thead><tbody>
+          ${ranks.slice(0, 30).map((r) => `<tr data-bizno="${esc(String(r.prcbdrBizno || '').replace(/\D/g, ''))}"${/낙찰/.test(r.rmrk || '') ? ' class="hl"' : ''}><td>${esc(r.opengRank)}</td><td>${corpLink(r.prcbdrBizno, r.prcbdrNm)}</td><td class="nw rgn"><span class="small muted">확인 중</span></td><td class="num">${won(r.bidprcAmt)}</td><td class="num">${r.bidprcrt ? esc(r.bidprcrt) + '%' : '-'}</td>${nego ? `<td class="num">${esc(r.techEvlVal || '')}</td><td class="num">${esc(r.bidPrceEvlVal || '')}</td><td class="num">${esc(r.totalEvlAmtVal || '')}</td>` : ''}<td>${esc(r.rmrk || '')}</td></tr>`).join('')}
         </tbody></table></div>${ranks.length > 30 ? `<p class="small muted">상위 30개사만 표시 (전체 ${ranks.length}개사는 나라장터에서 확인)</p>` : ''}` : '<div class="small muted">개찰 순위 정보가 없습니다.</div>'}
         ${linkRow([['나라장터 공고 상세(개찰결과)', ntceUrl]])}`);
+      fillRankRegions(box, st);
       return;
     }
     if (step === 'cntrct') {
@@ -1135,6 +1253,21 @@
         : `<div class="tablewrap"><table><thead><tr><th>계약번호</th><th>계약명</th><th>계약기관</th><th>체결방법</th><th class="num">계약금액</th><th>계약일자</th></tr></thead><tbody>
           ${list.map((c) => `<tr><td>${esc(c[1])}</td><td>${esc(c[2])}</td><td>${esc(c[3])}</td><td>${esc(c[5])}</td><td class="num">${won(c[6])}</td><td>${esc(c[7])}</td></tr>`).join('')}</tbody></table></div>${linkRow([['나라장터', G2B_HOME]])}`);
     }
+  }
+
+  // 개찰 순위 업체마다 소재지를 사용자정보서비스로 확인 (6개씩 동시, 같은 업체는 재사용)
+  async function fillRankRegions(box, st) {
+    const tbl = $('.ranktbl', box), cb = $('.cnonly', box);
+    if (!tbl) return;
+    const apply = () => $$('tbody tr', tbl).forEach((tr) => { tr.hidden = !!(cb && cb.checked) && tr.dataset.cn !== '1'; });
+    if (cb) { cb.checked = !!st.cnOnly; cb.addEventListener('change', () => { st.cnOnly = cb.checked; apply(); }); }
+    const rows = $$('tbody tr', tbl);
+    await pool(rows.map((tr) => async () => {
+      const rg = await corpRegion(tr.dataset.bizno);
+      tr.dataset.cn = isCN(rg) ? '1' : '0';
+      $('.rgn', tr).innerHTML = rg ? rgnBadge(rg) : '<span class="small muted">-</span>';
+    }), 6);
+    apply();
   }
 
   function bindCopy(root) {

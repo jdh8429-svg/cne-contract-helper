@@ -1655,7 +1655,402 @@
   }
 
   // =====================================================================
-  // 6. 내 보관함
+  // 6. 물품 · 나라장터 쇼핑몰 찾기
+  // =====================================================================
+  // 나라장터 쇼핑몰 품목정보(상품 · 납품요구 · 특정품목 조달내역) + 조달청 물품목록정보(품명 · 품목 · 속성)
+  // 쇼핑몰 데이터는 전날까지 제공 → 조회 끝 날짜 기본값은 어제
+  const yday = () => iso(addDays(today(), -1));
+  const ymdDash = (s) => { const v = String(s || '').replace(/\D/g, ''); return v.length >= 8 ? `${v.slice(0, 4)}-${v.slice(4, 6)}-${v.slice(6, 8)}` : (s || ''); };
+  const SHOP_URL = 'https://shop.g2b.go.kr';
+  const GD = {
+    tab: 'shop',
+    // 나라장터 쇼핑몰 상품
+    q: '', field: 'prdctClsfcNoNm', mthd: '', excl: false, cert: false, cn: false, sort: 'price', months: '12',
+    items: null, err: null, seq: 0, key: '', open: '', buy: null, buyErr: null, buyKey: '',
+    // 납품요구 실적
+    dInst: '', dFrom: '', dTo: '', dQ: '', dItems: null, dErr: null, dSeq: 0, dOpen: '', dDtl: {},
+    // 물품분류 · 규격
+    cQ: '', cItems: null, cErr: null, cSeq: 0, cSel: '', cPrd: null, cPrdErr: null, cAttr: {}, cCn: false,
+  };
+  const GD_TABS = [['shop', '나라장터 쇼핑몰 상품 찾기'], ['dlvr', '납품요구 실적'], ['cls', '물품분류 · 규격 찾기']];
+  const SHOP_FIELDS = [['prdctClsfcNoNm', '품명'], ['dtilPrdctClsfcNoNm', '세부품명'], ['prdctIdntNoNm', '규격명(식별명)']];
+  const yn = (v) => String(v || '').toUpperCase() === 'Y';
+
+  function renderGoods(view, arg, params) {
+    GD.tab = GD_TABS.some(([k]) => k === params.tab) ? params.tab : 'shop';
+    if (!GD.dInst) GD.dInst = settings.insttNm || '충청남도교육청';
+    if (!GD.dFrom) { GD.dFrom = iso(addDays(today(), -30)); GD.dTo = yday(); }
+    view.innerHTML = `
+      <div class="tabs" role="tablist" aria-label="물품 메뉴 구분" style="margin:0">
+        ${GD_TABS.map(([k, t]) => `<a class="tab" role="tab" href="${esc(hashOf('goods', '', { tab: k === 'shop' ? '' : k }))}" aria-selected="${GD.tab === k}">${t}</a>`).join('')}
+      </div>
+      <div id="gdpane" style="display:flex;flex-direction:column;gap:16px"></div>`;
+    const pane = $('#gdpane');
+    if (GD.tab === 'dlvr') renderDlvr(pane); else if (GD.tab === 'cls') renderCls(pane, params); else renderShop(pane, params);
+  }
+
+  // ---------- 나라장터 쇼핑몰 상품 찾기 ----------
+  function renderShop(pane, params) {
+    if (params.q && params.q !== GD.q) { GD.q = params.q; GD.field = params.f && SHOP_FIELDS.some(([k]) => k === params.f) ? params.f : 'prdctClsfcNoNm'; GD.items = null; }
+    pane.innerHTML = `
+      <section class="card">
+        <form class="form" id="shform">
+          <label class="grow">검색어<input type="search" name="q" value="${esc(GD.q)}" placeholder="예: 책상, 논슬립, 의자" required></label>
+          <label>검색 대상<select name="field">${SHOP_FIELDS.map(([k, t]) => `<option value="${k}" ${GD.field === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+          <label>등록 기간<select name="months">${[['3', '최근 3개월'], ['12', '최근 1년'], ['36', '최근 3년']].map(([v, t]) => `<option value="${v}" ${GD.months === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+          <button class="btn primary" type="submit">상품 검색</button>
+        </form>
+        <div class="form" style="margin-top:10px;align-items:center">
+          <label>계약방법<select id="shmthd"><option value="">전체</option>${['다수공급자계약', '일반단가계약', '제3자단가계약'].map((v) => `<option ${GD.mthd === v ? 'selected' : ''}>${v}</option>`).join('')}</select></label>
+          <label>정렬<select id="shsort"><option value="price" ${GD.sort === 'price' ? 'selected' : ''}>낮은 가격순</option><option value="recent" ${GD.sort === 'recent' ? 'selected' : ''}>최근 등록순</option></select></label>
+          <label class="chk"><input type="checkbox" id="shexcl" ${GD.excl ? 'checked' : ''}>우수제품</label>
+          <label class="chk"><input type="checkbox" id="shcert" ${GD.cert ? 'checked' : ''}>인증제품</label>
+          <label class="chk"><input type="checkbox" id="shcn" ${GD.cn ? 'checked' : ''}>충남 업체만</label>
+        </div>
+        <p class="small muted" style="margin:10px 0 0">나라장터 쇼핑몰에 등록된 단가계약 상품(전날까지 등록분)에서 찾습니다. 업체 이름을 누르면 '업체 확인'으로 이동합니다.</p>
+      </section>
+      <div class="row" style="align-items:flex-start">
+        <div id="shlist" style="flex:3 1 480px;min-width:0;display:flex;flex-direction:column;gap:12px"></div>
+        <aside style="flex:1 1 260px;min-width:0;display:flex;flex-direction:column;gap:16px"><section class="card" id="shsum"></section><section class="card" id="shbuy"></section></aside>
+      </div>`;
+    const f = $('#shform');
+    f.addEventListener('submit', (e) => {
+      e.preventDefault();
+      GD.q = f.q.value.trim(); GD.field = f.field.value; GD.months = f.months.value;
+      if (!GD.q) return;
+      GD.items = null;
+      replaceHash('goods', '', { q: GD.q, f: GD.field === 'prdctClsfcNoNm' ? '' : GD.field });
+      searchShop();
+    });
+    $('#shmthd').addEventListener('change', (e) => { GD.mthd = e.target.value; drawShop(); });
+    $('#shsort').addEventListener('change', (e) => { GD.sort = e.target.value; drawShop(); });
+    $('#shexcl').addEventListener('change', (e) => { GD.excl = e.target.checked; drawShop(); });
+    $('#shcert').addEventListener('change', (e) => { GD.cert = e.target.checked; drawShop(); });
+    $('#shcn').addEventListener('change', (e) => { GD.cn = e.target.checked; drawShop(); });
+    if (GD.q && !GD.items && !GD.err) searchShop(); else drawShop();
+  }
+
+  async function searchShop() {
+    const box = $('#shlist');
+    const from = monthsAgo(Number(GD.months)), to = yday();
+    box.innerHTML = loading(`나라장터 쇼핑몰 상품을 찾는 중… (${chunkNote('shop', from, to)})`);
+    $('#shsum').innerHTML = ''; $('#shbuy').innerHTML = '';
+    const my = ++GD.seq;
+    try {
+      const r = await g2bByRange('shop', 'getShoppingMallPrdctInfoList', { inqryDiv: 1, [GD.field]: GD.q }, from, to, { dateStyle: 'date', max: 999, progress: progressIn(box, '나라장터 쇼핑몰 상품을 찾는 중…') });
+      if (my !== GD.seq) return;
+      // 같은 상품(쇼핑계약번호+순번)은 하나만
+      const m = new Map();
+      r.items.forEach((p) => { const k = (p.shopngCntrctNo || '') + '|' + (p.shopngCntrctSno || '') + '|' + (p.prdctIdntNo || ''); if (!m.has(k)) m.set(k, p); });
+      GD.items = Array.from(m.values()); GD.err = null; GD.failed = r.failed;
+    } catch (e) { if (my === GD.seq) { GD.err = e.message; GD.items = null; } }
+    if (my === GD.seq) { drawShop(); loadBuy(); }
+  }
+
+  function drawShop() {
+    const box = $('#shlist'), sum = $('#shsum');
+    if (!box) return;
+    if (GD.err) { box.innerHTML = errBox(GD.err); sum.innerHTML = ''; return; }
+    if (!GD.items) { box.innerHTML = `<div class="card">${empty('품명이나 규격명을 입력하고 검색하세요.')}</div>`; sum.innerHTML = '<h2>단가 참고</h2><p class="small muted">검색하면 계약단가 통계가 표시됩니다.</p>'; return; }
+    // 충남 업체만: 계약업체 사업자번호로 소재지 확인 (상위 60개 업체, 저장해 두고 재사용)
+    if (GD.cn) {
+      const need = Array.from(new Set(GD.items.map((p) => String(p.cntrctCorpBizno || '').replace(/\D/g, '')).filter((b) => b.length === 10))).slice(0, 60);
+      const pending = need.filter((b) => !(GD.rgn || {})[b] && GD.rgn?.[b] !== '');
+      if (pending.length) {
+        box.innerHTML = loading(`업체 소재지를 확인하는 중… (${pending.length}곳)`);
+        GD.rgn = GD.rgn || {};
+        pool(pending.map((b) => async () => { GD.rgn[b] = await corpRegion(b); }), 6).then(drawShop);
+        return;
+      }
+    }
+    let list = GD.items.filter((p) => (!GD.mthd || String(p.cntrctMthdNm || '').replace(/\s/g, '').includes(GD.mthd.replace(/\s/g, '')))
+      && (!GD.excl || yn(p.exclncPrcrmntPrdctYn)) && (!GD.cert || (p.prodctCertList && p.prodctCertList !== '-'))
+      && (!GD.cn || isCN((GD.rgn || {})[String(p.cntrctCorpBizno || '').replace(/\D/g, '')])));
+    list = list.slice().sort(GD.sort === 'price' ? (a, b) => (num(a.cntrctPrceAmt) || 9e15) - (num(b.cntrctPrceAmt) || 9e15) : (a, b) => String(b.rgstDt || '').localeCompare(String(a.rgstDt || '')));
+    const shown = list.slice(0, 60);
+    box.innerHTML = list.length ? shown.map((p, i) => {
+      const badges = [
+        p.cntrctMthdNm ? `<span class="badge blue">${esc(p.cntrctMthdNm)}</span>` : '',
+        yn(p.exclncPrcrmntPrdctYn) ? '<span class="badge grn">우수조달</span>' : '',
+        yn(p.smetprCmptProdctYn) ? '<span class="badge">중소기업자간 경쟁</span>' : '',
+        p.prodctCertList && p.prodctCertList !== '-' ? `<span class="badge grn">${esc(p.prodctCertList)}</span>` : '',
+        GD.cn ? rgnBadge((GD.rgn || {})[String(p.cntrctCorpBizno || '').replace(/\D/g, '')]) : '',
+      ].join(' ');
+      const img = /^https:\/\//.test(p.prdctImgUrl || '') ? `<img src="${esc(p.prdctImgUrl)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : '<span class="noimg">이미지 없음</span>';
+      return `<article class="result prd">
+        <div class="pimg">${img}</div>
+        <div style="flex:1;min-width:0">
+          <div class="badges">${badges}</div>
+          <h3>${esc(p.prdctSpecNm || p.dtilPrdctClsfcNoNm || p.prdctClsfcNoNm)}</h3>
+          <div class="meta">${esc(p.prdctClsfcNoNm || '')} › ${esc(p.dtilPrdctClsfcNoNm || '')} · 물품식별번호 ${esc(p.prdctIdntNo || '-')}</div>
+          <div class="small" style="margin-top:6px">${corpLink(p.cntrctCorpBizno, p.cntrctCorpNm)} <span class="muted">· ${esc([p.entrprsDivNm, p.prdctMakrNm && p.prdctMakrNm !== p.cntrctCorpNm ? '제조 ' + p.prdctMakrNm : ''].filter(Boolean).join(' · '))}</span></div>
+          <div class="small muted" style="margin-top:4px">${esc([p.prdctUnit ? '단위 ' + p.prdctUnit : '', p.dlvrTmlmtDaynum ? '납품기한 ' + p.dlvrTmlmtDaynum + '일' : '', p.prdctSplyRgnNm, p.prdctDlvryCndtnNm, p.cntrctBgnDate ? `계약기간 ${ymdDash(p.cntrctBgnDate)} ~ ${ymdDash(p.cntrctEndDate)}` : ''].filter(Boolean).join(' · '))}</div>
+          <div class="btns" style="margin-top:10px">
+            <button type="button" class="btn sm" data-attr="${i}">규격 · 속성 보기</button>
+            <button type="button" class="btn sm" data-save="${i}">보관함에 저장</button>
+          </div>
+          <div id="shsub-${i}"></div>
+        </div>
+        <div class="pprice"><div class="small muted">계약단가</div><strong>${won(p.cntrctPrceAmt)}</strong>${p.prdctUnit ? `<span class="small muted">/${esc(p.prdctUnit)}</span>` : ''}${ext(SHOP_URL, '나라장터 쇼핑몰')}</div>
+      </article>`;
+    }).join('') + (list.length > 60 ? `<p class="small muted">상위 60건만 표시합니다 (전체 ${list.length}건). 검색어를 더 구체적으로 입력해 보세요.</p>` : '')
+      : `<div class="card">${empty(GD.items.length ? '선택한 조건에 맞는 상품이 없습니다.' : '검색 결과가 없습니다. 등록 기간을 늘리거나 검색 대상을 바꿔 보세요.')}</div>`;
+    $$('.pimg img', box).forEach((im) => im.addEventListener('error', () => { const s = document.createElement('span'); s.className = 'noimg'; s.textContent = '이미지 없음'; im.replaceWith(s); }));
+    $$('button[data-attr]', box).forEach((b) => b.addEventListener('click', () => { const p = shown[Number(b.dataset.attr)]; const sub = $('#shsub-' + b.dataset.attr); if (sub.innerHTML) { sub.innerHTML = ''; return; } loadAttrs(p.prdctIdntNo, sub); }));
+    $$('button[data-save]', box).forEach((b) => b.addEventListener('click', () => { const p = shown[Number(b.dataset.save)]; saveItem({ kind: '물품', key: p.prdctIdntNo + '|' + p.shopngCntrctNo, name: `${p.prdctSpecNm || p.prdctClsfcNoNm} (${p.cntrctCorpNm}, ${won(p.cntrctPrceAmt)})`, link: SHOP_URL }); }));
+    // 단가 참고: 가장 많은 단위끼리
+    const units = {};
+    list.forEach((p) => { const u = p.prdctUnit || '-'; (units[u] = units[u] || []).push(num(p.cntrctPrceAmt)); });
+    const top = Object.entries(units).sort((a, b) => b[1].length - a[1].length)[0];
+    const vals = top ? top[1].filter((v) => v > 0) : [];
+    sum.innerHTML = `<h2>단가 참고</h2>
+      ${GD.failed ? `<p class="small" style="color:var(--red);margin:0 0 8px">일부 기간(${GD.failed}구간)은 응답이 없어 빠졌습니다.</p>` : ''}
+      <p class="small muted" style="margin:0 0 10px">조건에 맞는 상품 ${list.length}건 중 단위 '${esc(top ? top[0] : '-')}' ${vals.length}건 기준</p>
+      <dl class="kv" style="grid-template-columns:1fr auto">
+        <dt>최저 단가</dt><dd><strong>${won(vals.length ? Math.min(...vals) : 0)}</strong></dd>
+        <dt>평균 단가</dt><dd>${won(vals.length ? Math.round(vals.reduce((a, b) => a + b, 0) / vals.length) : 0)}</dd>
+        <dt>최고 단가</dt><dd>${won(vals.length ? Math.max(...vals) : 0)}</dd>
+      </dl>
+      <button type="button" class="btn" id="shcsv" style="width:100%;margin-top:14px;justify-content:center">검색 결과 CSV 내보내기</button>`;
+    $('#shcsv').addEventListener('click', () => downloadCsv(`나라장터쇼핑몰_${GD.q}_${iso(today())}.csv`, [['물품규격명', '품명', '세부품명', '물품식별번호', '계약업체', '사업자번호', '기업구분', '계약방법', '계약단가', '단위', '납품기한(일)', '공급지역', '우수조달', '인증', '계약시작', '계약종료', '쇼핑계약번호']].concat(list.map((p) => [p.prdctSpecNm, p.prdctClsfcNoNm, p.dtilPrdctClsfcNoNm, p.prdctIdntNo, p.cntrctCorpNm, p.cntrctCorpBizno, p.entrprsDivNm, p.cntrctMthdNm, num(p.cntrctPrceAmt), p.prdctUnit, p.dlvrTmlmtDaynum, p.prdctSplyRgnNm, p.exclncPrcrmntPrdctYn, p.prodctCertList, ymdDash(p.cntrctBgnDate), ymdDash(p.cntrctEndDate), p.shopngCntrctNo]))));
+    drawBuy();
+  }
+
+  // 품목(물품식별번호) 개별 속성 → 규격서 작성 참고
+  async function loadAttrs(idnt, sub) {
+    if (!idnt) { sub.innerHTML = `<div class="sub">${empty('물품식별번호가 없습니다.')}</div>`; return; }
+    sub.innerHTML = `<div class="sub">${loading('품목 속성을 불러오는 중…')}</div>`;
+    try {
+      const r = GD.cAttr[idnt] || (GD.cAttr[idnt] = await g2bAll('thng', 'getPrdctIndvAtrbInfoList02', { prdctIdntNo: idnt }, { per: 100, max: 300 }));
+      sub.innerHTML = `<div class="sub"><h3>품목 속성 <span class="small muted">물품식별번호 ${esc(idnt)}</span></h3>${r.items.length ? `<div class="tablewrap"><table><thead><tr><th>속성명</th><th>속성값</th><th>단위</th></tr></thead><tbody>${r.items.map((a) => `<tr><td>${esc(a.attrNm)}</td><td>${esc(a.attrVal)}</td><td>${esc(a.attrUnit || '')}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small muted">등록된 속성이 없습니다.</p>'}</div>`;
+    } catch (e) { GD.cAttr[idnt] = null; sub.innerHTML = `<div class="sub">${errBox(e.message)}</div>`; }
+  }
+
+  // 다른 기관 구매 실적: 같은 품명을 쇼핑몰 · 총액계약으로 산 내역 (최근 3개월)
+  async function loadBuy() {
+    const nm = GD.field === 'prdctClsfcNoNm' ? GD.q : ((GD.items || [])[0] || {}).prdctClsfcNoNm;
+    const key = nm || '';
+    if (!nm) { GD.buy = []; GD.buyKey = key; drawBuy(); return; }
+    if (GD.buyKey === key && (GD.buy || GD.buyErr)) { drawBuy(); return; }
+    GD.buyKey = key; GD.buy = null; GD.buyErr = null; drawBuy();
+    try {
+      const r = await g2bByRange('shop', 'getSpcifyPrdlstPrcureInfoList', { inqryDiv: 1, inqryPrdctDiv: 1, prdctClsfcNoNm: nm }, iso(addDays(today(), -91)), yday(), { dateStyle: 'date', max: 999 });
+      if (GD.buyKey !== key) return;
+      GD.buy = r.items.filter((x) => x.fnlCntrctDlvrReqChgOrdYn !== 'N');
+    } catch (e) { if (GD.buyKey === key) GD.buyErr = e.message; }
+    drawBuy();
+  }
+  function drawBuy() {
+    const box = $('#shbuy');
+    if (!box) return;
+    const nm = GD.buyKey;
+    if (!GD.items) { box.innerHTML = '<h2>다른 기관 구매 실적</h2><p class="small muted">검색하면 같은 품명을 다른 기관이 산 단가가 표시됩니다.</p>'; return; }
+    if (GD.buyErr) { box.innerHTML = `<h2>다른 기관 구매 실적</h2>${errBox(GD.buyErr)}`; return; }
+    if (!GD.buy) { box.innerHTML = `<h2>다른 기관 구매 실적</h2>${loading(`'${nm}' 구매 실적을 불러오는 중…`)}`; return; }
+    const mine = GD.buy.filter((x) => String(x.dminsttNm || '').includes((settings.insttNm || '').slice(0, 4)));
+    const rows = GD.buy.slice().sort((a, b) => String(b.cntrctDlvrReqDate).localeCompare(String(a.cntrctDlvrReqDate)));
+    const ups = rows.map((x) => num(x.prdctUprc)).filter((v) => v > 0);
+    box.innerHTML = `<h2>다른 기관 구매 실적</h2>
+      <p class="small muted" style="margin:0 0 10px">'${esc(nm)}' 최근 3개월 ${rows.length}건${mine.length ? ` · 우리 기관 ${mine.length}건` : ''}${ups.length ? ` · 평균 단가 ${won(Math.round(ups.reduce((a, b) => a + b, 0) / ups.length))}` : ''}</p>
+      ${rows.length ? `<div class="tablewrap"><table><thead><tr><th>수요기관 · 품목</th><th class="num">단가</th></tr></thead><tbody>${rows.slice(0, 15).map((x) => `<tr><td>${esc(x.dminsttNm)}<div class="small muted">${esc(x.prdctIdntNoNm || x.dtilPrdctClsfcNoNm || '')} · ${corpLink(x.bizno, x.corpNm)} · ${esc(ymdDash(x.cntrctDlvrReqDate))}</div></td><td class="num nw">${won(x.prdctUprc)}${x.prdctQty ? `<div class="small muted">${esc(x.prdctQty)}${esc(x.prdctUnit || '')}</div>` : ''}</td></tr>`).join('')}</tbody></table></div>${rows.length > 15 ? '<p class="small muted">최근 15건만 표시</p>' : ''}` : '<p class="small muted">최근 3개월 구매 실적이 없습니다.</p>'}`;
+  }
+
+  // ---------- 납품요구 실적 ----------
+  function renderDlvr(pane) {
+    pane.innerHTML = `
+      <section class="card">
+        <form class="form" id="dlform">
+          <label>수요기관<input type="search" name="inst" value="${esc(GD.dInst)}" placeholder="비우면 전국"></label>
+          <label>접수일 시작<input type="date" name="from" value="${esc(GD.dFrom)}" max="${yday()}" required></label>
+          <label>접수일 끝<input type="date" name="to" value="${esc(GD.dTo)}" max="${yday()}" required></label>
+          <label class="grow">건명 · 업체 · 품명 (선택)<input type="search" name="q" value="${esc(GD.dQ)}" placeholder="예: 책상, 급식기구"></label>
+          <button class="btn primary" type="submit">납품요구 조회</button>
+        </form>
+        <p class="small muted" style="margin:10px 0 0">단가계약(일반단가 · 제3자단가 · 다수공급자) 물품을 나라장터 쇼핑몰에서 납품요구한 내역입니다. 전날 접수분까지, 한 번에 최대 3개월.</p>
+      </section>
+      <div id="dlres" style="display:flex;flex-direction:column;gap:16px"></div>`;
+    const f = $('#dlform');
+    f.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const bad = checkRange(f.from.value, f.to.value, 92);
+      if (bad) { $('#dlres').innerHTML = errBox(bad); return; }
+      const changed = f.inst.value.trim() !== GD.dInst || f.from.value !== GD.dFrom || f.to.value !== GD.dTo;
+      GD.dInst = f.inst.value.trim(); GD.dFrom = f.from.value; GD.dTo = f.to.value; GD.dQ = f.q.value.trim();
+      if (changed || !GD.dItems) searchDlvr(); else drawDlvr();
+    });
+    if (GD.dItems || GD.dErr) drawDlvr(); else searchDlvr();
+  }
+  async function searchDlvr() {
+    const box = $('#dlres');
+    box.innerHTML = loading(`납품요구 내역을 받는 중… (${chunkNote('shop', GD.dFrom, GD.dTo)})`);
+    const my = ++GD.dSeq;
+    try {
+      const r = await g2bByRange('shop', 'getDlvrReqInfoList', { inqryDiv: 1, dminsttNm: GD.dInst }, GD.dFrom, GD.dTo, { dateStyle: 'date', max: 5000, progress: progressIn(box, '납품요구 내역을 받는 중…') });
+      if (my !== GD.dSeq) return;
+      // 같은 납품요구번호는 최종 변경차수만
+      const m = new Map();
+      r.items.forEach((d) => { const p = m.get(d.dlvrReqNo); if (!p || String(d.dlvrReqChgOrd) > String(p.dlvrReqChgOrd)) m.set(d.dlvrReqNo, d); });
+      GD.dItems = Array.from(m.values()).sort((a, b) => String(b.dlvrReqRcptDate).localeCompare(String(a.dlvrReqRcptDate)));
+      GD.dErr = null; GD.dTrunc = r.truncated;
+    } catch (e) { if (my === GD.dSeq) { GD.dErr = e.message; GD.dItems = null; } }
+    if (my === GD.dSeq) drawDlvr();
+  }
+  function drawDlvr() {
+    const box = $('#dlres');
+    if (!box) return;
+    if (GD.dErr) { box.innerHTML = errBox(GD.dErr); return; }
+    if (!GD.dItems) { box.innerHTML = ''; return; }
+    const q = GD.dQ;
+    const list = GD.dItems.filter((d) => !q || [d.dlvrReqNm, d.corpNm, d.rprsntPrdctClsfcNoNm, d.rprsntDtilPrdctClsfcNoNm].some((v) => String(v || '').includes(q)));
+    const total = list.reduce((a, d) => a + num(d.dlvrReqAmt), 0);
+    const corps = new Set(list.map((d) => d.corpBizno || d.corpNm));
+    const rg = GD.dRgn || {};
+    const cnCnt = list.filter((d) => isCN(rg[String(d.corpBizno || '').replace(/\D/g, '')])).length;
+    const checked = list.filter((d) => rg[String(d.corpBizno || '').replace(/\D/g, '')] != null).length;
+    box.innerHTML = `
+      <div class="stats">
+        <div class="card stat"><div class="small muted">납품요구 건수</div><strong>${list.length.toLocaleString()}건</strong></div>
+        <div class="card stat"><div class="small muted">납품요구 금액</div><strong>${won(total)}</strong></div>
+        <div class="card stat"><div class="small muted">업체 수</div><strong>${corps.size.toLocaleString()}곳</strong></div>
+        <div class="card stat"><div class="small muted">충남 업체 비율</div><strong>${checked ? Math.round((cnCnt / checked) * 100) + '%' : '-'}</strong>${checked < list.length ? `<button type="button" class="linkbtn small" id="dlrgn">${checked ? '나머지 확인' : '업체 소재지 확인'}</button>` : ''}</div>
+      </div>
+      <section class="card">
+        <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:8px;align-items:baseline;margin-bottom:10px">
+          <h2 style="margin:0">납품요구 목록</h2>
+          <span class="small muted">${esc(GD.dInst || '전국')} · ${esc(GD.dFrom)} ~ ${esc(GD.dTo)}${q ? ` · '${esc(q)}'` : ''}</span>
+        </div>
+        ${GD.dTrunc ? '<p class="small" style="color:var(--red)">결과가 많아 일부 구간이 잘렸습니다. 기간을 줄이거나 수요기관을 지정해 보세요.</p>' : ''}
+        ${list.length ? `<div class="tablewrap"><table>
+          <thead><tr><th class="nw">접수일</th><th>납품요구건명</th><th>업체</th><th>대표품명</th><th class="nw">계약형태</th><th class="num">금액</th><th class="nw">납기</th></tr></thead>
+          <tbody>${list.slice(0, 300).map((d, i) => `<tr>
+            <td class="nw">${esc(ymdDash(d.dlvrReqRcptDate))}</td>
+            <td><button type="button" class="linkbtn" data-dl="${i}" aria-expanded="${GD.dOpen === d.dlvrReqNo}">${esc(d.dlvrReqNm)}</button><div class="small muted">${esc(d.dlvrReqNo)}${d.dlvrReqChgOrd && d.dlvrReqChgOrd !== '00' ? ` · 변경 ${esc(d.dlvrReqChgOrd)}차` : ''}${GD.dInst ? '' : ` · ${esc(d.dminsttNm || '')}`}</div></td>
+            <td>${corpLink(d.corpBizno, d.corpNm)} ${rgnBadge(rg[String(d.corpBizno || '').replace(/\D/g, '')])}<div class="small muted">${esc(d.corpEntrprsDivNmNm || '')}</div></td>
+            <td>${esc(d.rprsntPrdctClsfcNoNm || '')}<div class="small muted">${esc(d.rprsntDtilPrdctClsfcNoNm || '')}</div></td>
+            <td class="nw">${esc(d.cntrctCnclsStleNm || '')}${yn(d.masYn) ? '<div class="small muted">다수공급자</div>' : ''}${yn(d.exclcProdctYn) ? '<div class="small muted">우수제품</div>' : ''}</td>
+            <td class="num nw">${won(d.dlvrReqAmt)}</td>
+            <td class="nw">${esc(ymdDash(d.maxDlvrTmlmtDate))}</td></tr>
+            ${GD.dOpen === d.dlvrReqNo ? `<tr><td colspan="7" style="background:var(--soft)" id="dldtl">${loading('품목 상세를 불러오는 중…')}</td></tr>` : ''}`).join('')}</tbody>
+        </table></div>${list.length > 300 ? '<p class="small muted">최근 300건만 표시 (CSV에는 전체)</p>' : ''}
+        <button type="button" class="btn" id="dlcsv" style="margin-top:12px">납품요구 CSV 내보내기</button>` : empty('조건에 맞는 납품요구가 없습니다.')}
+      </section>`;
+    $$('button[data-dl]', box).forEach((b) => b.addEventListener('click', () => { const d = list[Number(b.dataset.dl)]; GD.dOpen = GD.dOpen === d.dlvrReqNo ? '' : d.dlvrReqNo; drawDlvr(); }));
+    const rb = $('#dlrgn');
+    if (rb) rb.addEventListener('click', async () => {
+      rb.disabled = true; rb.textContent = '확인 중…';
+      GD.dRgn = GD.dRgn || {};
+      const bz = Array.from(new Set(list.map((d) => String(d.corpBizno || '').replace(/\D/g, '')).filter((b) => b.length === 10 && GD.dRgn[b] == null))).slice(0, 80);
+      await pool(bz.map((b) => async () => { GD.dRgn[b] = await corpRegion(b); }), 6);
+      drawDlvr();
+    });
+    const csv = $('#dlcsv');
+    if (csv) csv.addEventListener('click', () => downloadCsv(`납품요구_${GD.dInst || '전국'}_${GD.dFrom}_${GD.dTo}.csv`, [['접수일', '납품요구번호', '변경차수', '건명', '수요기관', '업체', '사업자번호', '기업구분', '대표품명', '대표세부품명', '계약형태', '다수공급자', '우수제품', '금액', '최대납기']].concat(list.map((d) => [ymdDash(d.dlvrReqRcptDate), d.dlvrReqNo, d.dlvrReqChgOrd, d.dlvrReqNm, d.dminsttNm, d.corpNm, d.corpBizno, d.corpEntrprsDivNmNm, d.rprsntPrdctClsfcNoNm, d.rprsntDtilPrdctClsfcNoNm, d.cntrctCnclsStleNm, d.masYn, d.exclcProdctYn, num(d.dlvrReqAmt), ymdDash(d.maxDlvrTmlmtDate)]))));
+    if (GD.dOpen) loadDlvrDtl(GD.dOpen);
+  }
+  async function loadDlvrDtl(no) {
+    const cell = () => $('#dldtl');
+    try {
+      const r = GD.dDtl[no] || (GD.dDtl[no] = await g2bAll('shop', 'getDlvrReqDtlInfoList', { inqryDiv: 2, dlvrReqNo: no }, { per: 100, max: 500 }));
+      const items = r.items;
+      if (!cell() || GD.dOpen !== no) return;
+      const pick = (o, ...ks) => { for (const k of ks) if (o[k] != null && o[k] !== '') return o[k]; return ''; };
+      cell().innerHTML = items.length ? `<div class="tablewrap"><table><thead><tr><th>품목</th><th class="num">수량</th><th class="num">단가</th><th class="num">금액</th><th>납품장소 · 기한</th></tr></thead><tbody>${items.map((x) => `<tr><td>${esc(pick(x, 'prdctIdntNoNm', 'dtilPrdctClsfcNoNm', 'prdctClsfcNoNm'))}<div class="small muted">${esc(pick(x, 'prdctIdntNo'))}</div></td><td class="num">${esc(pick(x, 'prdctQty', 'dlvrReqQty'))}${esc(pick(x, 'prdctUnit'))}</td><td class="num">${won(pick(x, 'prdctUprc', 'cntrctUprc'))}</td><td class="num">${won(pick(x, 'prdctAmt', 'dlvrReqAmt'))}</td><td class="small">${esc([pick(x, 'dlvrPlceNm'), ymdDash(pick(x, 'dlvrTmlmtDate'))].filter(Boolean).join(' · '))}</td></tr>`).join('')}</tbody></table></div>` : '<p class="small muted">품목 상세가 없습니다.</p>';
+    } catch (e) { GD.dDtl[no] = null; if (cell()) cell().innerHTML = errBox(e.message); }
+  }
+
+  // ---------- 물품분류 · 규격 찾기 ----------
+  function renderCls(pane, params) {
+    if (params.q && params.q !== GD.cQ) { GD.cQ = params.q; GD.cItems = null; GD.cSel = ''; }
+    pane.innerHTML = `
+      <section class="card">
+        <form class="form" id="clform">
+          <label class="grow">품명 또는 물품분류번호(8자리) · 세부품명번호(10자리)<input type="search" name="q" value="${esc(GD.cQ)}" placeholder="예: 책상, 태양광발전장치, 56101703" required></label>
+          <button class="btn primary" type="submit">분류 찾기</button>
+        </form>
+        <p class="small muted" style="margin:10px 0 0">조달청 물품목록에서 품명 · 세부품명을 찾고, 품목(물품식별번호)별 제조업체 · 속성을 확인합니다. 규격서 작성이나 품명 확인에 참고하세요.</p>
+      </section>
+      <div class="row" style="align-items:flex-start">
+        <section class="card" id="clres" style="flex:1 1 360px;min-width:0"></section>
+        <section class="card" id="clprd" style="flex:1.4 1 420px;min-width:0"></section>
+      </div>`;
+    $('#clform').addEventListener('submit', (e) => {
+      e.preventDefault();
+      const q = e.target.q.value.trim();
+      if (!q) return;
+      GD.cQ = q; GD.cItems = null; GD.cSel = ''; GD.cPrd = null;
+      replaceHash('goods', '', { tab: 'cls', q });
+      searchCls();
+    });
+    if (GD.cQ && !GD.cItems && !GD.cErr) searchCls(); else { drawCls(); drawClsPrd(); }
+  }
+  async function searchCls() {
+    const box = $('#clres');
+    box.innerHTML = loading('품명을 찾는 중…'); $('#clprd').innerHTML = '';
+    const my = ++GD.cSeq;
+    const q = GD.cQ.replace(/\s/g, '');
+    const p = /^\d{10}$/.test(q) ? { dtilPrdctClsfcNo: q } : /^\d{8}$/.test(q) ? { prdctClsfcNo: q } : { prdctClsfcNoNm: GD.cQ };
+    try {
+      const r = await g2bAll('thng', 'getThngPrdnmLocplcAccotListInfoInfoPrdnmSearch02', p, { per: 100, max: 300 });
+      if (my !== GD.cSeq) return;
+      GD.cItems = r.items; GD.cErr = null;
+      if (!GD.cSel && r.items[0]) GD.cSel = r.items[0].dtilPrdctClsfcNo || r.items[0].prdctClsfcNo;
+    } catch (e) { if (my === GD.cSeq) { GD.cErr = e.message; GD.cItems = null; } }
+    if (my === GD.cSeq) { drawCls(); if (GD.cSel) loadClsPrd(); else drawClsPrd(); }
+  }
+  function drawCls() {
+    const box = $('#clres');
+    if (!box) return;
+    if (GD.cErr) { box.innerHTML = `<h2>품명 · 세부품명</h2>${errBox(GD.cErr)}`; return; }
+    if (!GD.cItems) { box.innerHTML = `<h2>품명 · 세부품명</h2>${empty('품명이나 분류번호를 입력하세요.')}`; return; }
+    box.innerHTML = `<h2>품명 · 세부품명 <span class="small muted">${GD.cItems.length}건</span></h2>
+      ${GD.cItems.length ? `<div class="tablewrap"><table><thead><tr><th class="nw">물품분류번호</th><th>품명 · 세부품명</th><th class="nw">세부품명번호</th></tr></thead><tbody>
+        ${GD.cItems.slice(0, 200).map((c, i) => { const k = c.dtilPrdctClsfcNo || c.prdctClsfcNo; return `<tr${GD.cSel === k ? ' class="hl"' : ''}><td class="nw">${esc(c.prdctClsfcNo)}</td><td><button type="button" class="linkbtn" data-cl="${i}">${esc(c.dtilPrdctClsfcNoNm || c.prdctClsfcNoNm)}</button><div class="small muted">${esc(c.prdctClsfcNoNm)}${c.prdctClsfcNoEngNm ? ' · ' + esc(c.prdctClsfcNoEngNm) : ''}</div></td><td class="nw">${esc(c.dtilPrdctClsfcNo || '')}</td></tr>`; }).join('')}
+      </tbody></table></div>` : empty('일치하는 품명이 없습니다.')}`;
+    $$('button[data-cl]', box).forEach((b) => b.addEventListener('click', () => { const c = GD.cItems[Number(b.dataset.cl)]; GD.cSel = c.dtilPrdctClsfcNo || c.prdctClsfcNo; GD.cPrd = null; drawCls(); loadClsPrd(); }));
+  }
+  async function loadClsPrd() {
+    const sel = GD.cSel;
+    $('#clprd').innerHTML = loading('품목을 불러오는 중…');
+    const c = (GD.cItems || []).find((x) => (x.dtilPrdctClsfcNo || x.prdctClsfcNo) === sel) || {};
+    try {
+      const p = /^\d{10}$/.test(sel) ? { dtilPrdctClsfcNo: sel } : { prdctClsfcNoNm: c.prdctClsfcNoNm || GD.cQ };
+      const [a, b] = await Promise.allSettled([
+        g2bAll('thng', 'getThngPrdnmLocplcAccotListInfoInfoLocplcSearch02', p, { per: 100, max: 300 }),
+        g2bAll('thng', 'getThngPrdnmLocplcAccotListInfoInfoPrdlstSearch02', p, { per: 100, max: 300 }),
+      ]);
+      if (GD.cSel !== sel) return;
+      const loc = a.status === 'fulfilled' ? a.value.items : [];
+      const prd = b.status === 'fulfilled' ? b.value.items : [];
+      // 품목 목록에 소재지(제조업체 · 지역)를 합침
+      const byId = new Map(loc.map((x) => [x.prdctIdntNo, x]));
+      const merged = (prd.length ? prd : loc).map((x) => Object.assign({}, x, byId.get(x.prdctIdntNo) || {}, { prdctImgLrge: x.prdctImgLrge }));
+      GD.cPrd = merged; GD.cPrdErr = merged.length ? null : (a.status === 'rejected' ? a.reason.message : b.status === 'rejected' ? b.reason.message : null);
+    } catch (e) { GD.cPrd = []; GD.cPrdErr = e.message; }
+    drawClsPrd();
+  }
+  function drawClsPrd() {
+    const box = $('#clprd');
+    if (!box) return;
+    if (!GD.cSel) { box.innerHTML = '<h2>품목 · 속성</h2><p class="small muted">왼쪽에서 품명을 고르면 품목(물품식별번호)과 속성이 표시됩니다.</p>'; return; }
+    if (!GD.cPrd) { box.innerHTML = loading('품목을 불러오는 중…'); return; }
+    const list = GD.cPrd.filter((x) => !GD.cCn || isCN(x.rgnNm));
+    box.innerHTML = `<div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:6px;align-items:baseline"><h2 style="margin:0">품목 · 속성 <span class="small muted">${esc(GD.cSel)} · ${list.length}건</span></h2>
+        <label class="small" style="display:inline-flex;gap:6px;align-items:center"><input type="checkbox" id="clcn" ${GD.cCn ? 'checked' : ''}>충남 제조업체만</label></div>
+      <div class="btns" style="margin:10px 0"><a class="btn sm" href="${esc(hashOf('goods', '', { q: ((GD.cItems || []).find((x) => (x.dtilPrdctClsfcNo || x.prdctClsfcNo) === GD.cSel) || {}).prdctClsfcNoNm || GD.cQ }))}">이 품명으로 나라장터 쇼핑몰 상품 찾기</a></div>
+      ${GD.cPrdErr ? errBox(GD.cPrdErr) : ''}
+      ${list.length ? `<div class="tablewrap"><table><thead><tr><th class="nw">물품식별번호</th><th>품목명</th><th>제조업체 · 지역</th><th></th></tr></thead><tbody>
+        ${list.slice(0, 100).map((x, i) => `<tr><td class="nw">${esc(x.prdctIdntNo)}</td><td>${esc(x.krnPrdctNm || '')}${x.useYn === 'N' ? ' <span class="badge">미사용</span>' : ''}</td><td>${esc(x.mnfctCorpNm || '-')} ${rgnBadge(x.rgnNm)}</td><td class="nw"><button type="button" class="linkbtn small" data-at="${i}">속성</button></td></tr><tr hidden id="clat-${i}"><td colspan="4" style="background:var(--soft)"></td></tr>`).join('')}
+      </tbody></table></div>${list.length > 100 ? '<p class="small muted">100건만 표시</p>' : ''}` : (GD.cPrdErr ? '' : empty('품목이 없습니다.'))}`;
+    $('#clcn').addEventListener('change', (e) => { GD.cCn = e.target.checked; drawClsPrd(); });
+    $$('button[data-at]', box).forEach((b) => b.addEventListener('click', () => {
+      const tr = $('#clat-' + b.dataset.at);
+      tr.hidden = !tr.hidden;
+      if (!tr.hidden) loadAttrs(list[Number(b.dataset.at)].prdctIdntNo, tr.firstElementChild);
+    }));
+  }
+
+  // =====================================================================
+  // 7. 내 보관함
   // =====================================================================
   let savedTab = '전체';
   function renderSaved(view) {
@@ -1665,7 +2060,7 @@
       <section class="card">
         <div style="display:flex;flex-wrap:wrap;justify-content:space-between;gap:10px;margin-bottom:4px">
           <div class="tabs" role="tablist" aria-label="보관함 구분" style="margin:0">
-            ${['전체', '계약', '공고', '업체', '법령해석', '업종'].map((t) => `<button type="button" class="tab" role="tab" data-t="${t}" aria-selected="${t === savedTab}">${t}</button>`).join('')}
+            ${['전체', '계약', '공고', '업체', '물품', '법령해석', '업종'].map((t) => `<button type="button" class="tab" role="tab" data-t="${t}" aria-selected="${t === savedTab}">${t}</button>`).join('')}
           </div>
           <button type="button" class="btn" id="svcsv" ${list.length ? '' : 'disabled'}>CSV 내보내기</button>
         </div>
@@ -1772,6 +2167,7 @@
     { id: 'similar', label: '유사사업 찾기', sub: '다른 기관의 비슷한 사업 · 문서 · 금액 참고', render: renderSimilar },
     { id: 'notice', label: '공고 준비 · 확인', sub: '우리 기관 공고 · 입찰조건 · 정정이력', render: renderNotice, update: updateNotice },
     { id: 'law', label: '법령 · 해석 찾기', sub: '조달청 법령해석 · 업종별 근거법규', render: renderLaw, update: updateLaw },
+    { id: 'goods', label: '물품 · 나라장터 쇼핑몰 찾기', sub: '나라장터 쇼핑몰 상품 · 납품요구 실적 · 물품분류 · 규격', render: renderGoods },
     { id: 'saved', label: '내 보관함', sub: '저장한 계약 · 공고 · 업체 · 해석 · 업종과 메모', render: renderSaved },
     { id: 'settings', label: '설정', sub: '우리 기관 · 주요 업무', render: renderSettings },
   ];

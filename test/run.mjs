@@ -52,6 +52,20 @@ function fixture(urlStr) {
     { bidNtceNo: 'R26BK00000198', bidNtceOrd: '001', bidNtceNm: '청사 방수공사', ntceInsttNm: '충청남도교육청', bidNtceDt: '2026-10-01 09:00:00', bidClseDt: '2026-10-05 10:00:00', presmptPrce: '150000000', ntceKindNm: '변경공고', ntceSpecFileNm1: '시방서.pdf', ntceSpecDocUrl1: 'https://www.g2b.go.kr/d3' },
   ]);
   if (op.startsWith('getBidPblancListInfo') && /^(getBidPblancListInfo)(Thng|Cnstwk|Servc|Frgcpt)$/.test(op)) return wrap([{ bidNtceNo: 'R26BK00000101', bidNtceOrd: '000', bidNtceNm: '정보시스템 통합유지관리 용역', bidNtceDt: '2026-07-20 10:00:00', bidClseDt: '2026-08-10 10:00:00', opengDt: '2026-08-11 11:00:00', presmptPrce: '830000000', asignBdgtAmt: '913000000', bidNtceDtlUrl: 'https://www.g2b.go.kr/n' }]);
+  if (op === 'getShoppingMallPrdctInfoList') return wrap([
+    { prdctImgUrl: 'https://shop.g2b.go.kr/x.jpg', cntrctCorpNm: '우영테크', cntrctCorpBizno: '3052852824', entrprsDivNm: '중소기업', cntrctMthdNm: '제3자단가계약', exclncPrcrmntPrdctYn: 'N', masYn: 'Y', cntrctPrceAmt: '33000', prdctUnit: 'm', prdctMakrNm: '우영테크', prdctSplyRgnNm: '전지역', dlvrTmlmtDaynum: '30', prdctClsfcNo: '30161908', prdctClsfcNoNm: '계단부품', dtilPrdctClsfcNo: '3016190801', dtilPrdctClsfcNoNm: '논슬립', prdctIdntNo: '26052231', prdctSpecNm: '논슬립, 우영테크, HS-100CAP', shopngCntrctNo: 'R26TA0155571200', shopngCntrctSno: '15', cntrctBgnDate: '20260301', cntrctEndDate: '20270131', prodctCertList: '소상공인', rgstDt: '20260301' },
+    { cntrctCorpNm: '가나다정보통신(주)', cntrctCorpBizno: '1234567890', entrprsDivNm: '중소기업', cntrctMthdNm: '다수공급자계약', exclncPrcrmntPrdctYn: 'Y', cntrctPrceAmt: '29000', prdctUnit: 'm', prdctClsfcNoNm: '계단부품', dtilPrdctClsfcNoNm: '논슬립', prdctIdntNo: '26052299', prdctSpecNm: '논슬립, 가나다, GN-1', shopngCntrctNo: 'R26TA0100000100', shopngCntrctSno: '1', rgstDt: '20260601' },
+  ]);
+  if (op === 'getSpcifyPrdlstPrcureInfoList') return wrap([{ cntrctDlvrReqDate: '20261010', dminsttNm: '충청남도교육청 ○○초', prdctIdntNoNm: '논슬립, 우영테크', bizno: '3052852824', corpNm: '우영테크', prdctUprc: '33000', prdctQty: '120', prdctUnit: 'm', fnlCntrctDlvrReqChgOrdYn: 'Y' }]);
+  if (op === 'getDlvrReqInfoList') return wrap([
+    { dlvrReqNo: 'R26TB00000001', dlvrReqChgOrd: '00', dlvrReqRcptDate: '2026-11-02', dlvrReqNm: '○○초 교실 책상 구매', dlvrReqAmt: '12000000', dminsttNm: '충청남도교육청', corpNm: '가나다정보통신(주)', corpBizno: '1234567890', corpEntrprsDivNmNm: '중소기업', rprsntPrdctClsfcNoNm: '책상', rprsntDtilPrdctClsfcNoNm: '학생용책상', maxDlvrTmlmtDate: '2026-12-10', cntrctCnclsStleNm: '제3자단가', masYn: 'Y' },
+    { dlvrReqNo: 'R26TB00000002', dlvrReqChgOrd: '01', dlvrReqRcptDate: '2026-10-20', dlvrReqNm: '급식실 냉장고 구매', dlvrReqAmt: '5000000', dminsttNm: '충청남도교육청', corpNm: '라마바(주)', corpBizno: '2223334445', rprsntPrdctClsfcNoNm: '냉장고', maxDlvrTmlmtDate: '2026-11-30', cntrctCnclsStleNm: '일반단가' },
+  ]);
+  if (op === 'getDlvrReqDtlInfoList') return wrap([{ prdctIdntNoNm: '학생용책상, 가나다, DK-1', prdctIdntNo: '24459422', prdctQty: '40', prdctUnit: '개', prdctUprc: '300000', prdctAmt: '12000000', dlvrPlceNm: '○○초등학교', dlvrTmlmtDate: '20261210' }]);
+  if (op === 'getThngPrdnmLocplcAccotListInfoInfoPrdnmSearch02') return wrap([{ prdctClsfcNo: '56101703', prdctClsfcNoNm: '책상', prdctClsfcNoEngNm: 'Desks', dtilPrdctClsfcNo: '5610170301', dtilPrdctClsfcNoNm: '책상' }, { prdctClsfcNo: '56101703', prdctClsfcNoNm: '책상', dtilPrdctClsfcNo: '5610170302', dtilPrdctClsfcNoNm: '학생용책상' }]);
+  if (op === 'getThngPrdnmLocplcAccotListInfoInfoLocplcSearch02') return wrap([{ prdctIdntNo: '24459422', krnPrdctNm: '책상, 가나다, DK-1', mnfctCorpNm: '가나다정보통신(주)', rgnNm: '충청남도 아산시', useYn: 'Y' }, { prdctIdntNo: '24459999', krnPrdctNm: '책상, 서울가구, S-1', mnfctCorpNm: '서울가구', rgnNm: '서울특별시 강남구', useYn: 'Y' }]);
+  if (op === 'getThngPrdnmLocplcAccotListInfoInfoPrdlstSearch02') return wrap([{ prdctIdntNo: '24459422', krnPrdctNm: '책상, 가나다, DK-1' }, { prdctIdntNo: '24459999', krnPrdctNm: '책상, 서울가구, S-1' }]);
+  if (op === 'getPrdctIndvAtrbInfoList02') return wrap([{ attrNm: '가로', attrVal: '1200', attrUnit: 'mm' }, { attrNm: '재질', attrVal: '스틸', attrUnit: '' }]);
   if (op.startsWith('getCntrctProcssIntgOpen')) return wrap([{ orderPlanNo: '5-1-2026-8340103-000004-00', orderPlanUntyNo: '5-1-2026-8340103-000004', orderBizNm: '정보시스템 통합유지관리', orderInsttNm: '충청남도교육청', orderYm: '2026-07', prcrmntMethdNm: '자체조달', cntrctCnclsMthdNm: '협상', bfSpecRgstNo: 'R26BD00011111', bfSpecBizNm: '정보시스템 통합유지관리 용역', opninRgstClseDt: '2026-07-10 10:00', bidNtceNo: 'R26BK00000211', bidwinrInfoList: '[1^가나다정보통신(주)^1234567890^홍길동^800000000^88.041^5^2026-08-11 11:00]', cntrctInfoList: '[1^2026090000001^정보시스템 통합유지관리 용역^충청남도교육청^충청남도교육청^협상에의한계약^912000000^2026-09-15]' }]);
   if (op.startsWith('getPublicPrcureThngInfo')) return wrap([{ bsnsDivNm: '일반용역', refNo: '정보-123', prdctClsfcNoNm: '정보시스템 통합유지관리 용역', orderInsttNm: '충청남도교육청', rlDminsttNm: '충청남도교육청', asignBdgtAmt: '902000000', rcptDt: '2026-07-01 09:00:00', opninRgstClseDt: '2026-07-10 10:00:00', swBizObjYn: 'Y', bfSpecRgstNo: 'R26BD00011111', specDocFileUrl1: 'https://www.g2b.go.kr/s1', prdctDtlList: '[1^8111159901^정보시스템유지관리서비스]', bidNtceNoList: 'R26BK00000211' }]);
   if (op.startsWith('getPublicPrcureThngOpinionInfo')) return wrap([{ opninNo: '1', rplyNo: '0', opninTitl: '과업 범위 문의', mkngCorpNm: '라마바(주)', mkrNm: '김비공개', mkrTel: '01000000000', mkrEmail: 'secret@x.kr', inptDt: '2026-07-05 10:00:00', opninCntnts: '과업 범위를 확인 부탁드립니다.' }, { opninNo: '1', rplyNo: '1', opninTitl: '관련 답변', mkngCorpNm: '충청남도교육청', inptDt: '2026-07-06 10:00:00', opninCntnts: '답변 드립니다.' }]);
@@ -68,6 +82,7 @@ function fixture(urlStr) {
   if (op === 'getBidPblancListInfoPrtcptPsblRgn') return wrap([{ prtcptPsblRgnNm: '충청남도' }]);
   if (/BsisAmount$/.test(op)) return wrap([{ bssamt: '890000000', bssamtOpenDt: '2026-10-20 10:00', rsrvtnPrceRngBgnRate: '-2', rsrvtnPrceRngEndRate: '+2' }]);
   if (/ChgHstry/.test(op)) return wrap([{ chgDt: '2026-10-16 09:00', chgItemNm: '입찰마감일시', bfchgVal: '2026-11-05', afchgVal: '2026-11-12' }]);
+  if (op === 'getPrcrmntCorpBasicInfo02' && u.searchParams.get('bizno') === '3052852824') return wrap([{ bizno: '3052852824', corpNm: '우영테크', rgnNm: '경기도 화성시' }]);
   if (op === 'getPrcrmntCorpBasicInfo02' && u.searchParams.get('bizno') === '2223334445') return wrap([{ bizno: '2223334445', corpNm: '라마바(주)', rgnNm: '서울특별시 강남구' }]);
   if (op === 'getPrcrmntCorpBasicInfo02') return wrap([{ bizno: '1234567890', corpNm: '가나다정보통신(주)', ceoNm: '홍길동', adrs: '충청남도 홍성군', telNo: '041-000-0000', corpBsnsDivNm: '물품,용역', opbizDt: '2001-01-01 00:00:00' }]);
   if (op === 'getPrcrmntCorpIndstrytyInfo02') return wrap([{ indstrytyNm: '소프트웨어사업자', indstrytyCd: '1468', rprsntIndstrytyYn: 'Y', indstrytyStatsNm: '정상', vldPrdExprtDt: '2027-01-01' }]);
@@ -190,6 +205,7 @@ if (chromium) {
     page.on('pageerror', (e) => errors.push(e.message));
     page.on('console', (m) => { if (m.type() === 'error' && !/fonts\.g/.test(m.text())) errors.push(m.text()); });
     await page.route(/fonts\.(googleapis|gstatic)\.com/, (r) => r.fulfill({ status: 200, contentType: 'text/css', body: '' }));
+    await page.route(/(shop|img)\.g2b\.go\.kr/, (r) => r.fulfill({ status: 200, contentType: 'image/gif', body: Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64') }));
     const shot = (n) => page.screenshot({ path: path.join(shots, `${vp.name}-${n}.png`), fullPage: true });
 
     calls.length = 0;
@@ -208,7 +224,7 @@ if (chromium) {
       await page.waitForSelector('#clist table');
       ok(calls.length === 0, `[${vp.name}] 메뉴를 오가도 다시 호출하지 않음 (${calls.length}회)`);
     }
-    ok(await page.locator('#nav a').count() === 7, `[${vp.name}] 메뉴 7개`);
+    ok(await page.locator('#nav a').count() === 8, `[${vp.name}] 메뉴 8개`);
     ok((await page.textContent('.brand')).includes('충청남도교육청 계약 업무 도우미'), `[${vp.name}] 제목`);
     await page.waitForSelector('#crecent table');
     ok(await page.locator('#crecent tbody tr').count() > 0, `[${vp.name}] 우리 기관 최근 계약 표시`);
@@ -367,6 +383,37 @@ if (chromium) {
     await page.waitForFunction(() => document.querySelectorAll('#htestres .badge').length === 8);
     ok(await page.locator('#htestres .badge.grn').count() === 8, `[${vp.name}] 연결 테스트 8개 정상`);
     await shot('7-settings');
+    {
+      // 물품 · 나라장터 쇼핑몰 찾기
+      ok((await page.locator('#nav a').nth(5).textContent()).includes('물품 · 나라장터 쇼핑몰 찾기') && (await page.locator('#nav a').nth(6).textContent()).includes('내 보관함'), `[${vp.name}] 새 메뉴가 내 보관함 위에`);
+      await page.goto(base + '/#goods?q=' + encodeURIComponent('논슬립'));
+      await page.reload();
+      await page.waitForSelector('#shlist .result.prd');
+      ok((await page.locator('#shlist .result.prd h3').first().textContent()).includes('가나다'), `[${vp.name}] 쇼핑몰 상품: 낮은 가격순 정렬`);
+      await page.waitForSelector('#shbuy table');
+      ok((await page.textContent('#shbuy')).includes('충청남도교육청'), `[${vp.name}] 다른 기관 구매 실적`);
+      await page.check('#shcn');
+      await page.waitForFunction(() => document.querySelectorAll('#shlist .result.prd').length === 1);
+      ok((await page.textContent('#shlist')).includes('가나다'), `[${vp.name}] 쇼핑몰 상품: 충남 업체만`);
+      await page.uncheck('#shcn');
+      await page.click('#shlist button[data-attr]');
+      await page.waitForSelector('#shsub-0 table');
+      ok((await page.textContent('#shsub-0')).includes('스틸'), `[${vp.name}] 규격 · 속성 보기`);
+      await page.click('#view .tabs a:nth-child(2)');
+      await page.waitForSelector('#dlres table');
+      ok((await page.textContent('#dlres')).includes('○○초 교실 책상 구매') && (await page.textContent('#dlres .stats')).includes('17,000,000원'), `[${vp.name}] 납품요구 실적 목록 · 합계`);
+      await page.click('#dlres button[data-dl]');
+      await page.waitForSelector('#dldtl table');
+      ok((await page.textContent('#dldtl')).includes('학생용책상'), `[${vp.name}] 납품요구 품목 상세`);
+      await page.click('#view .tabs a:nth-child(3)');
+      await page.fill('#clform [name=q]', '책상');
+      await page.click('#clform button[type=submit]');
+      await page.waitForSelector('#clprd table');
+      ok(await page.locator('#clprd tbody tr:not([hidden])').count() === 2, `[${vp.name}] 물품분류: 품목 · 제조업체`);
+      await page.check('#clcn');
+      ok(await page.locator('#clprd tbody tr:not([hidden])').count() === 1, `[${vp.name}] 물품분류: 충남 제조업체만`);
+      await shot('9-goods');
+    }
     {
       // 낙찰업체 지역 필터 (유사사업 찾기)
       await page.goto(base + '/#similar/' + encodeURIComponent('유지관리'));

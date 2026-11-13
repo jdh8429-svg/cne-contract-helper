@@ -755,7 +755,7 @@
       </section>
       <div id="kresult" style="display:flex;flex-direction:column;gap:16px"></div>
       <section class="card" id="cnwin">
-        <h2>충남 업체 낙찰 실적 <span class="badge blue">시험</span></h2>
+        <h2>충남 업체 낙찰 실적</h2>
         <form class="form" id="cnform">
           <label>업무<select name="biz">${Object.keys(BIZ).map((b) => `<option ${b === KR.biz ? 'selected' : ''}>${b}</option>`).join('')}</select></label>
           <label>개찰일 시작<input type="date" name="from" value="${esc(KR.from)}" max="${iso(today())}" required></label>

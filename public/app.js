@@ -1994,8 +1994,10 @@
     try {
       const r = await g2bAll('thng', 'getThngPrdnmLocplcAccotListInfoInfoPrdnmSearch02', p, { per: 100, max: 300 });
       if (my !== GD.cSeq) return;
-      GD.cItems = r.items; GD.cErr = null;
-      if (!GD.cSel && r.items[0]) GD.cSel = r.items[0].dtilPrdctClsfcNo || r.items[0].prdctClsfcNo;
+      // 검색어와 똑같은 품명 · 세부품명을 맨 위로
+      const qq = GD.cQ.trim(), rank = (c) => (c.dtilPrdctClsfcNoNm === qq ? 0 : c.prdctClsfcNoNm === qq ? 1 : String(c.dtilPrdctClsfcNoNm || '').startsWith(qq) ? 2 : String(c.prdctClsfcNoNm || '').includes(qq) ? 3 : 4);
+      GD.cItems = r.items.slice().sort((x, y) => rank(x) - rank(y)); GD.cErr = null;
+      if (!GD.cSel && GD.cItems[0]) GD.cSel = GD.cItems[0].dtilPrdctClsfcNo || GD.cItems[0].prdctClsfcNo;
     } catch (e) { if (my === GD.cSeq) { GD.cErr = e.message; GD.cItems = null; } }
     if (my === GD.cSeq) { drawCls(); if (GD.cSel) loadClsPrd(); else drawClsPrd(); }
   }

@@ -384,8 +384,8 @@ if (chromium) {
     ok(await page.locator('#htestres .badge.grn').count() === 8, `[${vp.name}] 연결 테스트 8개 정상`);
     await shot('7-settings');
     {
-      // 물품 · 나라장터 쇼핑몰 찾기
-      ok((await page.locator('#nav a').nth(5).textContent()).includes('물품 · 나라장터 쇼핑몰 찾기') && (await page.locator('#nav a').nth(6).textContent()).includes('내 보관함'), `[${vp.name}] 새 메뉴가 내 보관함 위에`);
+      // 물품 · 나라장터 쇼핑몰
+      ok((await page.locator('#nav a').nth(5).textContent()).includes('물품 · 나라장터 쇼핑몰') && (await page.locator('#nav a').nth(6).textContent()).includes('내 보관함'), `[${vp.name}] 새 메뉴가 내 보관함 위에`);
       await page.goto(base + '/#goods?q=' + encodeURIComponent('논슬립'));
       await page.reload();
       await page.waitForSelector('#shlist .result.prd');
@@ -413,6 +413,13 @@ if (chromium) {
       await page.check('#clcn');
       ok(await page.locator('#clprd tbody tr:not([hidden])').count() === 1, `[${vp.name}] 물품분류: 충남 제조업체만`);
       await shot('9-goods');
+      // 사이트 이름 누르면 입력 내용 초기화 + 첫 화면
+      await page.click('.brand');
+      await page.waitForSelector('#clist');
+      ok(!page.url().includes('#goods') && !String(await page.evaluate(() => sessionStorage.getItem('cne.last'))).includes('goods'), `[${vp.name}] 사이트 이름 → 초기화 후 첫 화면`);
+      await page.click('#nav a[href="#goods"]');
+      await page.waitForSelector('#shform');
+      ok((await page.inputValue('#shform [name=q]')) === '', `[${vp.name}] 초기화 후 이전 검색어 없음`);
     }
     {
       // 낙찰업체 지역 필터 (유사사업 찾기)

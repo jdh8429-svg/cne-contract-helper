@@ -1657,7 +1657,7 @@
   }
 
   // =====================================================================
-  // 6. 물품 · 나라장터 쇼핑몰 찾기
+  // 6. 물품 · 나라장터 쇼핑몰
   // =====================================================================
   // 나라장터 쇼핑몰 품목정보(상품 · 납품요구 · 특정품목 조달내역) + 조달청 물품목록정보(품명 · 품목 · 속성)
   // 쇼핑몰 데이터는 전날까지 제공 → 조회 끝 날짜 기본값은 어제
@@ -2171,7 +2171,7 @@
     { id: 'similar', label: '유사사업 찾기', sub: '다른 기관의 비슷한 사업 · 문서 · 금액 참고', render: renderSimilar },
     { id: 'notice', label: '공고 준비 · 확인', sub: '우리 기관 공고 · 입찰조건 · 정정이력', render: renderNotice, update: updateNotice },
     { id: 'law', label: '법령 · 해석 찾기', sub: '조달청 법령해석 · 업종별 근거법규', render: renderLaw, update: updateLaw },
-    { id: 'goods', label: '물품 · 나라장터 쇼핑몰 찾기', sub: '나라장터 쇼핑몰 상품 · 납품요구 실적 · 물품분류 · 규격', render: renderGoods },
+    { id: 'goods', label: '물품 · 나라장터 쇼핑몰', sub: '나라장터 쇼핑몰 상품 · 납품요구 실적 · 물품분류 · 규격', render: renderGoods },
     { id: 'saved', label: '내 보관함', sub: '저장한 계약 · 공고 · 업체 · 해석 · 업종과 메모', render: renderSaved },
     { id: 'settings', label: '설정', sub: '우리 기관 · 주요 업무', render: renderSettings },
   ];
@@ -2206,6 +2206,16 @@
     $('#gq').blur();
     if (/^\d{10}$/.test(digits)) go('corp', digits); else go('similar', q);
   }
+  // 왼쪽 위 사이트 이름: 입력·검색 내용과 메뉴별 마지막 화면 기억을 지우고 첫 화면으로 새로고침
+  // (설정의 기관 정보와 내 보관함은 그대로 둠)
+  const brand = $('.brand');
+  if (brand) brand.addEventListener('click', (e) => {
+    if (e.ctrlKey || e.metaKey || e.shiftKey) return;
+    e.preventDefault();
+    try { sessionStorage.clear(); } catch (err) { /* 무시 */ }
+    try { Object.keys(localStorage).filter((k) => k.startsWith('cne.snap.')).forEach((k) => localStorage.removeItem(k)); } catch (err) { /* 무시 */ }
+    location.replace(location.pathname);
+  });
   // 왼쪽 메뉴를 누르면 그 메뉴에서 마지막으로 보던 화면으로 이동 (지금 메뉴를 다시 누르면 첫 화면)
   $('#nav').addEventListener('click', (e) => {
     const a = e.target.closest('a[href^="#"]');

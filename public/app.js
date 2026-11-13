@@ -48,7 +48,9 @@
   // 개발계정에서는 7일까지만 허용됐음(2026.11). 운영계정은 먼저 31일 단위로 시도하고,
   // 거절(07)되면 그 브라우저에서 하루 동안 7일 단위로 바꿔 조회함.
   const CHUNK_TRY = 31, CHUNK_SAFE = 7, CONC = 6;
-  const chunkDays = (svc) => { const v = store.get('cne.chunk.' + svc, null); return v && Date.now() - v.t < 86400e3 ? v.d : CHUNK_TRY; };
+  // 나라장터 쇼핑몰 품목 목록은 31일 한 번보다 7일씩 나눈 쪽이 훨씬 빠름(실측 31일 12초 / 7일 0.7초)
+  const CHUNK_FIXED = { shop: 7 };
+  const chunkDays = (svc) => { if (CHUNK_FIXED[svc]) return CHUNK_FIXED[svc]; const v = store.get('cne.chunk.' + svc, null); return v && Date.now() - v.t < 86400e3 ? v.d : CHUNK_TRY; };
   const setChunk = (svc, d) => store.set('cne.chunk.' + svc, { t: Date.now(), d });
   const CHUNK_DAYS = CHUNK_SAFE;
   // 화면별 최대 조회 기간 (운영계정 하루 호출량이 넉넉해 1년까지)
@@ -1665,7 +1667,7 @@
   const GD = {
     tab: 'shop',
     // 나라장터 쇼핑몰 상품
-    q: '', field: 'prdctClsfcNoNm', mthd: '', excl: false, cert: false, cn: false, sort: 'price', months: '12',
+    q: '', field: 'prdctClsfcNoNm', mthd: '', excl: false, cert: false, cn: false, sort: 'price', months: '3',
     items: null, err: null, seq: 0, key: '', open: '', buy: null, buyErr: null, buyKey: '',
     // 납품요구 실적
     dInst: '', dFrom: '', dTo: '', dQ: '', dItems: null, dErr: null, dSeq: 0, dOpen: '', dDtl: {},
@@ -1697,7 +1699,7 @@
         <form class="form" id="shform">
           <label class="grow">검색어<input type="search" name="q" value="${esc(GD.q)}" placeholder="예: 책상, 논슬립, 의자" required></label>
           <label>검색 대상<select name="field">${SHOP_FIELDS.map(([k, t]) => `<option value="${k}" ${GD.field === k ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
-          <label>등록 기간<select name="months">${[['3', '최근 3개월'], ['12', '최근 1년'], ['36', '최근 3년']].map(([v, t]) => `<option value="${v}" ${GD.months === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
+          <label>등록 기간<select name="months">${[['1', '최근 1개월'], ['3', '최근 3개월'], ['6', '최근 6개월'], ['12', '최근 1년']].map(([v, t]) => `<option value="${v}" ${GD.months === v ? 'selected' : ''}>${t}</option>`).join('')}</select></label>
           <button class="btn primary" type="submit">상품 검색</button>
         </form>
         <div class="form" style="margin-top:10px;align-items:center">

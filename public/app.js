@@ -2206,6 +2206,25 @@
     $('#gq').blur();
     if (/^\d{10}$/.test(digits)) go('corp', digits); else go('similar', q);
   }
+  // 휴대폰에서 표를 카드처럼 보이게: 각 칸에 머리글 이름(data-label)을 붙여 둠 (CSS가 좁은 화면에서만 사용)
+  function labelTables(root) {
+    $$('table', root).forEach((t) => {
+      if (t.dataset.lab === '1') return;
+      const hr = t.tHead && t.tHead.rows[0];
+      if (!hr) return;
+      const heads = Array.from(hr.cells).map((c) => c.textContent.trim());
+      if (heads.length < 2 || heads.length > 9) return;
+      Array.from(t.tBodies).forEach((tb) => Array.from(tb.rows).forEach((tr) => {
+        if (tr.cells.length === 1 && tr.cells[0].colSpan > 1) { tr.classList.add('fullrow'); return; }
+        Array.from(tr.cells).forEach((td, i) => { if (heads[i] && !td.hasAttribute('data-label')) td.setAttribute('data-label', heads[i]); });
+      }));
+      t.dataset.lab = '1';
+      t.classList.add('cardify');
+    });
+  }
+  let labTimer = 0;
+  new MutationObserver(() => { clearTimeout(labTimer); labTimer = setTimeout(() => labelTables($('#view')), 30); }).observe($('#view'), { childList: true, subtree: true });
+
   // 왼쪽 위 사이트 이름: 입력·검색 내용과 메뉴별 마지막 화면 기억을 지우고 첫 화면으로 새로고침
   // (설정의 기관 정보와 내 보관함은 그대로 둠)
   const brand = $('.brand');

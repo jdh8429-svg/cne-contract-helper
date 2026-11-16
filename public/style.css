@@ -208,3 +208,62 @@ tr.hl td{background:#EEF5FE}
 .steps button[aria-selected="true"]{background:var(--navy);border-color:var(--navy)}
 .steps button:hover{background:var(--blue-bg)}
 .winline{background:var(--soft);border:1px solid var(--line-2)}
+
+/* ===== 태블릿 · 휴대폰 최적화 ===== */
+tr[hidden]{display:none!important}
+/* 태블릿(1024px 이하): 왼쪽 메뉴를 위쪽 4칸 메뉴판으로 */
+@media (max-width:1024px){
+  .layout{padding:16px 20px 40px;gap:16px}
+  .side{flex:1 1 100%;max-width:none;min-width:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:4px;padding:6px}
+  .side a{margin:0;min-height:44px;justify-content:center;text-align:center;padding:0 8px;font-size:14px;line-height:1.3}
+  .side a .dot{display:none}
+  .main{flex-basis:100%}
+  .top{padding:10px 20px;min-height:64px}
+}
+/* 휴대폰(640px 이하) */
+@media (max-width:640px){
+  .top{padding:10px 16px 12px;min-height:0;gap:8px}
+  .brand{font-size:17px}
+  .gsearch{flex:1 1 100%;max-width:none;height:44px;margin-left:0}
+  .layout{padding:12px 12px 32px;gap:12px}
+  /* 메뉴: 가로로 밀어서 보는 한 줄 */
+  .side{display:flex;gap:4px;overflow-x:auto;scroll-snap-type:x proximity;-webkit-overflow-scrolling:touch;padding:6px;border-top-width:3px;
+    -webkit-mask-image:linear-gradient(90deg,#000 88%,transparent);mask-image:linear-gradient(90deg,#000 88%,transparent)}
+  .side a{flex:0 0 auto;white-space:nowrap;padding:0 14px;scroll-snap-align:start;font-size:14px}
+  .pagehead{padding-bottom:8px}
+  .pagehead h1{font-size:22px}
+  .card{padding:14px;border-radius:8px}
+  /* 입력칸 16px: 아이폰에서 누를 때 화면이 확대되지 않게 */
+  .form input[type=text],.form input[type=search],.form input[type=date],.form select,.gsearch input{font-size:16px}
+  .form label{flex:1 1 calc(50% - 6px)}
+  .form label.grow{flex-basis:100%}
+  .form input[type=date]{width:100%}
+  .form .btn.primary{flex:1 1 100%;justify-content:center}
+  .btn{min-height:44px}
+  .btn.sm{min-height:38px}
+  /* 탭: 줄바꿈 없이 가로로 밀기 */
+  .tabs{flex-wrap:nowrap;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
+  .tabs::-webkit-scrollbar{display:none}
+  .tab,a.tab{white-space:nowrap;flex:0 0 auto;padding:0 14px;font-size:15px}
+  /* 표 → 카드: 한 줄이 한 장의 카드, 칸 이름은 왼쪽에 */
+  table.cardify{min-width:0;border-top:2px solid var(--navy)}
+  table.cardify thead{display:none}
+  table.cardify,table.cardify tbody{display:block;width:100%}
+  table.cardify tr{display:block;padding:10px 4px;border-bottom:1px solid var(--line)}
+  table.cardify td{display:block;position:relative;padding:3px 6px 3px 104px;border:0;text-align:left!important;white-space:normal!important;min-width:0;overflow-wrap:anywhere;min-height:24px}
+  table.cardify td::before{content:attr(data-label);position:absolute;left:6px;top:5px;width:90px;color:var(--muted);font-size:12px;line-height:1.4}
+  table.cardify td:not([data-label]),table.cardify td[data-label=""]{padding-left:6px}
+  table.cardify td:not([data-label])::before,table.cardify td[data-label=""]::before{content:none}
+  table.cardify td:empty{display:none}
+  table.cardify td:first-child{font-weight:500}
+  table.cardify tr.fullrow{padding:0}
+  table.cardify tr.fullrow>td{display:block;padding:8px 6px}
+  table.cardify tr.fullrow>td::before{content:none}
+
+  /* 결과 카드 · 단계 */
+  .steps button{min-height:64px}
+  dl.kv{grid-template-columns:92px 1fr}
+  .toast{left:12px;right:12px;bottom:12px}
+}
+
+.steps button[aria-selected="true"]:hover{background:var(--navy)}

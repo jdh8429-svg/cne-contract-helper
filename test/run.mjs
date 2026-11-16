@@ -198,7 +198,7 @@ if (chromium) {
   const browser = await chromium.launch();
   const shots = path.join(root, 'test', 'screens');
   fs.mkdirSync(shots, { recursive: true });
-  for (const vp of [{ name: 'pc', width: 1366, height: 900 }, { name: 'phone', width: 390, height: 844 }]) {
+  for (const vp of [{ name: 'pc', width: 1366, height: 900 }, { name: 'phone', width: 390, height: 844 }, { name: 'tablet', width: 820, height: 1180 }]) {
     const ctx = await browser.newContext({ viewport: { width: vp.width, height: vp.height } });
     const page = await ctx.newPage();
     const errors = [];

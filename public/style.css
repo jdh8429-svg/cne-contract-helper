@@ -267,3 +267,27 @@ tr[hidden]{display:none!important}
 }
 
 .steps button[aria-selected="true"]:hover{background:var(--navy)}
+
+/* ===== 공고 상세를 목록 바로 아래 펼침 ===== */
+tr.sel td{background:#EEF5FE}
+tr.detailrow>td{background:#F7FAFD;padding:16px 14px 18px;border-bottom:2px solid var(--navy)}
+.inlinedetail h2{margin:0 0 8px;font-size:17px}
+.inlinedetail .sub,.inlinedetail .flow{background:#fff}
+#nflow:not(:empty){margin-top:14px}
+
+/* ===== 스크롤해도 위쪽 머리말 · 메뉴 고정 ===== */
+.top{position:sticky;top:0;z-index:50}
+html{scroll-padding-top:92px}
+@media (min-width:1025px){
+  .side{position:sticky;top:88px;align-self:flex-start;max-height:calc(100vh - 104px);overflow-y:auto}
+}
+@media (max-width:1024px){
+  html{scroll-padding-top:80px}
+}
+@media (max-width:640px){
+  /* 휴대폰: 머리말(이름+검색)은 함께 올라가고, 메뉴 줄만 맨 위에 고정 */
+  .top{position:static}
+  .side{position:sticky;top:0;z-index:45;box-shadow:0 2px 6px rgba(11,65,123,.12)}
+  html{scroll-padding-top:68px}
+  tr.detailrow>td{padding:12px 8px}
+}

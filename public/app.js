@@ -1088,8 +1088,8 @@
 
   // 개찰일시가 지났는지
   const openedPast = (n) => { const d = n.opengDt || n.bidClseDt; return !!d && new Date(String(d).replace(' ', 'T')) < new Date(); };
-  function openFlow(n, sub, biz, step) {
-    const st = { n, biz, step: step || '', intg: null, err: null, cache: {} };
+  function openFlow(n, sub, biz, step, sync) {
+    const st = { n, biz, step: step || '', intg: null, err: null, cache: {}, sync: sync === undefined ? syncFlowHash : sync };
     sub.innerHTML = `<div class="sub flow">${loading('계약과정을 불러오는 중…')}</div>`;
     sub._flow = st;
     g2b('intg', `getCntrctProcssIntgOpen${BIZ[biz]}`, { inqryDiv: 1, bidNtceNo: n.bidNtceNo, numOfRows: 10 })
@@ -1119,7 +1119,7 @@
       <ol class="steps" role="tablist" aria-label="계약 단계">${FLOW_STEPS.map(([k, t], i) => `<li><button type="button" role="tab" aria-selected="${st.step === k}" data-step="${k}"><span class="no">${i + 1}</span><span class="t">${t}</span><span class="s">${esc(flowStatus(st, k))}</span></button></li>`).join('')}</ol>
       <div class="stepbody" role="tabpanel"></div>
     </div>`;
-    $$('button[data-step]', sub).forEach((b) => b.addEventListener('click', () => { st.step = b.dataset.step; drawFlow(sub); syncFlowHash(st); }));
+    $$('button[data-step]', sub).forEach((b) => b.addEventListener('click', () => { st.step = b.dataset.step; drawFlow(sub); if (st.sync) st.sync(st); }));
     drawStep(sub);
   }
 
@@ -1282,7 +1282,7 @@
   // =====================================================================
   // 4. 공고 준비 · 확인
   // =====================================================================
-  const N = { from: monthsAgo(1), to: iso(today()), q: '', items: null, err: null, sel: null, want: null, seq: 0 };
+  const N = { from: monthsAgo(1), to: iso(today()), q: '', items: null, err: null, sel: null, want: null, seq: 0, win: null, winKey: '', flowStep: '' };
 
   function renderNotice(view, arg, params) {
     N.want = params.n || null;
@@ -1298,7 +1298,7 @@
         <p class="small muted" style="margin:10px 0 0">${esc(settings.insttDivCd === '2' ? '수요기관' : '공고기관')}: ${esc(settings.insttNm)} · 업무: ${esc(settings.bizs.join(', '))}</p>
         <div id="nlist" style="margin-top:12px"></div>
       </section>
-      <section class="card" id="ndetail" hidden></section>`;
+`;
     $('#nform').addEventListener('submit', (e) => {
       e.preventDefault();
       const f = e.target;
@@ -1331,15 +1331,52 @@
     N.items = Array.from(map.values()).sort(byDateDesc('bidNtceDt'));
     N.err = !N.items.length && errs.length ? errs[0] : null;
     applyNoticeSel(false);
+    loadNoticeWinners();
+  }
+
+  // 같은 기간 · 같은 기관의 낙찰 결과(낙찰정보서비스)를 받아 목록의 '낙찰' 칸에 채움
+  async function loadNoticeWinners() {
+    const instKey = settings.insttDivCd === '2' ? 'dminsttNm' : 'ntceInsttNm';
+    const key = [settings.insttNm, instKey, settings.bizs.join(','), N.from, N.to].join('|');
+    if (N.winKey === key && N.win) { fillNoticeWinners(); return; }
+    N.winKey = key; N.win = null; fillNoticeWinners();
+    const res = await Promise.allSettled(settings.bizs.map((b) => g2bByRange('scsbid', `getScsbidListSttus${BIZ[b]}PPSSrch`, { inqryDiv: 1, [instKey]: settings.insttNm }, N.from, N.to, { max: 2000 })));
+    if (N.winKey !== key) return;
+    const m = new Map();
+    res.forEach((r) => { if (r.status === 'fulfilled') r.value.items.forEach((w) => { const p = m.get(w.bidNtceNo); if (!p || String(w.bidNtceOrd) + w.rbidNo > String(p.bidNtceOrd) + p.rbidNo) m.set(w.bidNtceNo, w); }); });
+    N.win = m; N.winFail = res.every((r) => r.status === 'rejected');
+    fillNoticeWinners();
+  }
+  function winnerCell(n) {
+    const w = N.win && N.win.get(n.bidNtceNo);
+    if (w) return `${corpLink(w.bidwinnrBizno, w.bidwinnrNm)}<div class="small muted">${w.sucsfbidRate ? esc(w.sucsfbidRate) + '% · ' : ''}${esc(rgnShort(w.bidwinnrAdrs))}</div>`;
+    if (!N.win) return '<span class="small muted">확인 중…</span>';
+    return `<span class="small muted">${openedPast(n) ? (N.winFail ? '조회 실패' : '결과 없음') : '개찰 전'}</span>`;
+  }
+  function fillNoticeWinners() {
+    if (!N.items) return;
+    const byNo = new Map(N.items.map((n) => [n.bidNtceNo, n]));
+    $$('#nlist td[data-win]').forEach((td) => { const n = byNo.get(td.dataset.win); if (n) td.innerHTML = winnerCell(n); });
+    const sum = $('#nwinsum');
+    if (sum && N.sel) sum.innerHTML = winSummary(N.sel);
+  }
+  function winSummary(n) {
+    const w = N.win && N.win.get(n.bidNtceNo);
+    if (!w) return '';
+    return `<div class="winline">낙찰 <strong>${corpLink(w.bidwinnrBizno, w.bidwinnrNm)}</strong> ${rgnBadge(w.bidwinnrAdrs)} · ${won(w.sucsfbidAmt)}${w.sucsfbidRate ? ` · 낙찰률 ${esc(w.sucsfbidRate)}%` : ''}${w.prtcptCnum ? ` · ${esc(w.prtcptCnum)}개사 참가` : ''}${w.rlOpengDt ? ` · 개찰 ${esc(dt(w.rlOpengDt))}` : ''}</div>`;
   }
 
   function applyNoticeSel(reveal) {
     const sel = N.want && N.items ? N.items.find((x) => x.bidNtceNo === N.want) : null;
+    if (N.sel !== (sel || null)) N.flowStep = '';
     N.sel = sel || null;
     drawNotices();
+    fillNoticeWinners();
     const box = $('#ndetail');
     if (!box) return;
-    if (sel) { drawNoticeDetail(sel); if (reveal) revealIfNew(box); } else { box.hidden = true; box.innerHTML = ''; }
+    // 상세는 누른 공고 바로 아래 줄에 펼침
+    drawNoticeDetail(sel);
+    if (reveal) revealIfNew(box.closest('tr').previousElementSibling || box);
   }
 
   function noticeStatus(n) {
@@ -1357,22 +1394,24 @@
     if (!N.items) { box.innerHTML = loading(); return; }
     if (!N.items.length) { box.innerHTML = empty('기간 내 공고가 없습니다. 설정의 기관명이나 기간을 확인하세요.'); return; }
     box.innerHTML = `<div class="small muted" style="margin-bottom:6px">총 ${N.items.length}건 · 공고일 최근순</div><div class="tablewrap"><table>
-      <thead><tr><th>공고명</th><th>업무</th><th>공고일</th><th>입찰마감</th><th>상태</th><th>문서</th><th>바로가기</th></tr></thead>
-      <tbody>${N.items.map((n) => { const [st, cls] = noticeStatus(n); return `<tr class="${N.sel === n ? 'sel' : ''}">
-        <td><a class="linkbtn" href="${esc(hashOf('notice', '', { n: n.bidNtceNo }))}">${esc(n.bidNtceNm)}</a><div class="small muted">${esc(n.bidNtceNo)}-${esc(n.bidNtceOrd)}</div></td>
+      <thead><tr><th>공고명</th><th>업무</th><th>공고일</th><th>입찰마감</th><th>상태</th><th>낙찰</th><th>문서</th><th>바로가기</th></tr></thead>
+      <tbody>${N.items.map((n) => { const [st, cls] = noticeStatus(n); const on = N.sel === n; return `<tr class="${on ? 'sel' : ''}">
+        <td><a class="linkbtn" href="${esc(hashOf('notice', '', on ? {} : { n: n.bidNtceNo }))}" aria-expanded="${on}">${esc(n.bidNtceNm)}</a><div class="small muted">${esc(n.bidNtceNo)}-${esc(n.bidNtceOrd)}</div></td>
         <td class="nw">${esc(n._biz)}</td><td class="nw">${esc(dateOnly(n.bidNtceDt))}</td><td class="nw">${esc(dt(n.bidClseDt) || '-')}</td>
-        <td><span class="badge ${cls}">${esc(st)}</span></td><td class="nw">${noticeDocs(n).length}개</td><td class="nw">${ext(n.bidNtceDtlUrl || n.bidNtceUrl)}</td></tr>`; }).join('')}</tbody>
+        <td><span class="badge ${cls}">${esc(st)}</span></td><td data-win="${esc(n.bidNtceNo)}">${winnerCell(n)}</td><td class="nw">${noticeDocs(n).length}개</td><td class="nw">${ext(n.bidNtceDtlUrl || n.bidNtceUrl)}</td></tr>
+        ${on ? '<tr class="detailrow"><td colspan="8"><div id="ndetail" class="inlinedetail"></div></td></tr>' : ''}`; }).join('')}</tbody>
     </table></div>`;
   }
 
   function drawNoticeDetail(n) {
     const box = $('#ndetail');
-    box.hidden = false;
+    if (!box || !n) return;
     const extra = BIZ_HAS_EXTRA.includes(n._biz);
     box.innerHTML = `
       <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:baseline">
         <h2>${esc(n.bidNtceNm)}</h2><span class="small muted">${esc(n.bidNtceNo)}-${esc(n.bidNtceOrd)}</span>
       </div>
+      <div id="nwinsum" style="margin-bottom:10px">${winSummary(n)}</div>
       <dl class="kv">
         <dt>계약방법</dt><dd>${esc(n.cntrctCnclsMthdNm || '-')}${n.bidMethdNm ? ' · ' + esc(n.bidMethdNm) : ''}</dd>
         <dt>낙찰방법</dt><dd>${esc(n.sucsfbidMthdNm || '-')}${n.sucsfbidLwltRate ? ` · 낙찰하한율 ${esc(n.sucsfbidLwltRate)}%` : ''}</dd>
@@ -1393,8 +1432,12 @@
         <button type="button" class="btn sm" data-x="save">보관함에 저장</button>
         ${ext(n.bidNtceDtlUrl || n.bidNtceUrl, '나라장터 공고')}
       </div>
-      <div id="nsub"></div>`;
+      <div id="nsub"></div>
+      <div id="nflow"></div>
+      <div style="margin-top:12px"><a class="btn sm" href="${esc(hashOf('notice', '', {}))}">상세 닫기</a></div>`;
     $$('button[data-x]', box).forEach((b) => b.addEventListener('click', () => noticeExtra(n, b.dataset.x)));
+    // 낙찰자 · 계약과정을 바로 보여 줌 (단계를 바꿔도 주소는 그대로)
+    openFlow(n, $('#nflow'), n._biz, N.flowStep, (st) => { N.flowStep = st.step; });
   }
 
   async function noticeExtra(n, x) {

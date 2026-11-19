@@ -337,6 +337,10 @@ if (chromium) {
     await page.click('#nav a[href="#notice"]');
     await page.waitForSelector('#nlist table');
     await page.click('#nlist a.linkbtn >> nth=0');
+    await page.waitForSelector('#nlist tr.detailrow #ndetail h2');
+    ok(await page.evaluate(() => { const d = document.querySelector('#nlist tr.detailrow'); return d && d.previousElementSibling.classList.contains('sel'); }), `[${vp.name}] 공고 상세가 누른 공고 바로 아래에 펼쳐짐`);
+    await page.waitForSelector('#ndetail #nflow .steps');
+    ok(true, `[${vp.name}] 공고 상세에 계약과정 한눈에 표시`);
     await page.click('#ndetail button[data-x="lic"]');
     await page.waitForSelector('#nsub .indref a');
     ok((await page.textContent('#nsub .indref')).includes('건설산업기본법'), `[${vp.name}] 면허제한에 근거법규 표시`);

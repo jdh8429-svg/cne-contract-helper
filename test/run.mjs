@@ -8,12 +8,13 @@ import { createRequire } from 'node:module';
 import * as g2b from '../functions/api/g2b.js';
 import * as law from '../functions/api/law.js';
 import * as health from '../functions/api/health.js';
+import * as stats from '../functions/api/stats.js';
 
 globalThis.FAKE_LIMIT = 31;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const KEY = 'TEST+KEY/abc==';
 const OC = 'myoc123';
-const ENV = { G2B_SERVICE_KEY: KEY, LAW_OC: OC };
+const ENV = { G2B_SERVICE_KEY: KEY, LAW_OC: OC, ADMIN_TOKEN: 'admin-secret-1' };
 let failures = 0;
 const ok = (cond, msg) => { if (cond) console.log('  ✓', msg); else { failures++; console.log('  ✗', msg); } };
 
@@ -173,6 +174,37 @@ console.log('서버 함수');
   delete globalThis.caches;
 }
 
+{
+  // 지난 기간은 오래 보관 (호출 최소화)
+  const kst = (d) => new Date(Date.now() + 9 * 3600e3 - d * 864e5).toISOString().slice(0, 10).replace(/-/g, '');
+  const F = (svc, q) => g2b.freshSeconds(svc, 'x', new URLSearchParams(q));
+  ok(F('cntrct', `inqryEndDate=${kst(0)}`) === 600, '보관: 오늘 포함 기간은 10분');
+  ok(F('cntrct', `inqryEndDate=${kst(3)}`) === 86400 && F('bid', `inqryEndDt=${kst(3)}2359`) === 86400, '보관: 1주 이내 지난 기간은 1일');
+  ok(F('bid', `inqryEndDt=${kst(30)}2359`) === 7 * 86400, '보관: 그 이전 기간은 7일');
+  ok(F('scsbid', `inqryDiv=1&inqryEndDt=${kst(30)}2359`) === 6 * 3600 && F('scsbid', `inqryDiv=1&inqryEndDt=${kst(90)}2359`) === 7 * 86400, '보관: 공고일 기준 낙찰 결과는 60일까지 6시간');
+  ok(F('usr', 'bizno=1') === 259200 && F('intg', 'bidNtceNo=1') === 3600, '보관: 업체정보 3일 · 공고번호 조회 1시간');
+}
+{
+  // 관리자 전용 호출 통계
+  const store = new Map();
+  globalThis.caches = { default: { match: async (req) => { const r = store.get(req.url); return r ? r.clone() : undefined; }, put: async (req, res) => { store.set(req.url, res); } } };
+  const waits = [];
+  const ctx = (u, h) => ({ request: new Request(u, { headers: h || {} }), env: ENV, waitUntil: (p) => waits.push(p) });
+  const U = 'http://x/api/g2b?svc=bid&op=getBidPblancListInfoServcPPSSrch&inqryDiv=1&bidNtceNm=통계';
+  await g2b.onRequestGet(ctx(U)); await g2b.onRequestGet(ctx(U)); await g2b.onRequestGet(ctx(U));
+  await Promise.all(waits);
+  const no = await stats.onRequestGet(ctx('http://x/api/stats'));
+  const bad = await stats.onRequestGet(ctx('http://x/api/stats', { 'x-admin-token': 'wrong' }));
+  ok(JSON.parse(await no.text()).ok === false && JSON.parse(await bad.text()).code === 'DENIED', '통계: 토큰 없거나 틀리면 차단');
+  const good = await stats.onRequestGet(ctx('http://x/api/stats?days=1', { 'x-admin-token': 'admin-secret-1' }));
+  const j = JSON.parse(await good.text());
+  const row = j.days[0].rows['bid|getBidPblancListInfoServcPPSSrch'] || {};
+  ok(j.ok && row.up === 1 && row.hit === 2, `통계: 실제 호출 1회 · 저장본 응답 2회 (${JSON.stringify(row)})`);
+  const none = await stats.onRequestGet({ request: new Request('http://x/api/stats', { headers: { 'x-admin-token': 'a' } }), env: {} });
+  ok(JSON.parse(await none.text()).code === 'NOTOKEN', '통계: 토큰이 설정되지 않으면 열리지 않음');
+  delete globalThis.caches;
+}
+
 // ---------- 2. 화면 ----------
 let chromium;
 try { chromium = createRequire(import.meta.url)('playwright').chromium; } catch (e) { console.log('\n(playwright 없음 – 화면 테스트 생략)'); }
@@ -181,9 +213,9 @@ if (chromium) {
   const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css', '.js': 'text/javascript' };
   const server = http.createServer(async (req, res) => {
     const u = new URL(req.url, 'http://localhost');
-    const mod = { '/api/g2b': g2b, '/api/law': law, '/api/health': health }[u.pathname];
+    const mod = { '/api/g2b': g2b, '/api/law': law, '/api/health': health, '/api/stats': stats }[u.pathname];
     if (mod) {
-      const r = await mod.onRequestGet({ request: new Request(u.href), env: ENV, waitUntil() {} });
+      const r = await mod.onRequestGet({ request: new Request(u.href, { headers: req.headers['x-admin-token'] ? { 'x-admin-token': req.headers['x-admin-token'] } : {} }), env: ENV, waitUntil() {} });
       res.writeHead(r.status, Object.fromEntries(r.headers));
       res.end(await r.text());
       return;
@@ -387,6 +419,36 @@ if (chromium) {
     await page.waitForFunction(() => document.querySelectorAll('#htestres .badge').length === 8);
     ok(await page.locator('#htestres .badge.grn').count() === 8, `[${vp.name}] 연결 테스트 8개 정상`);
     await shot('7-settings');
+    {
+      // 관리자 전용 호출 통계 화면
+      await page.goto(base + '/#settings/check');
+      await page.reload();
+      await page.fill('#stform [name=tok]', 'wrong');
+      await page.click('#stform button[type=submit]');
+      await page.waitForSelector('#stres .err');
+      ok((await page.textContent('#stres')).includes('맞지 않습니다'), `[${vp.name}] 통계: 틀린 토큰 차단`);
+      await page.fill('#stform [name=tok]', 'admin-secret-1');
+      await page.click('#stform button[type=submit]');
+      await page.waitForSelector('#stres .stats');
+      ok((await page.textContent('#stres')).includes('호출 절약 비율'), `[${vp.name}] 통계: 관리자 토큰으로 열림`);
+      ok(!String(await page.evaluate(() => localStorage.getItem('cne.admintok') || '')).includes('admin'), `[${vp.name}] 통계: '기억' 안 하면 토큰 저장 안 함`);
+      // 지난 기간 결과는 브라우저(IndexedDB)에 보관 → 새로고침 후 같은 조회는 서버에 묻지 않음
+      const url = base + '/#similar/' + encodeURIComponent('과거보관');
+      await page.goto(url);
+      await page.fill('#sform input[name="from"]', '2025-03-01');
+      await page.fill('#sform input[name="to"]', '2025-03-20');
+      await page.click('#sform button[type="submit"]');
+      await page.waitForSelector('#slist .result, #slist .empty');
+      await page.waitForTimeout(400);
+      await page.reload();
+      await page.fill('#sform input[name="from"]', '2025-03-01');
+      await page.fill('#sform input[name="to"]', '2025-03-20');
+      const before = calls.length;
+      await page.click('#sform button[type="submit"]');
+      await page.waitForSelector('#slist .result, #slist .empty');
+      const bidCalls = calls.slice(before).filter((u) => /BidPblancListInfo.*PPSSrch/.test(u.pathname)).length;
+      ok(bidCalls === 0, `[${vp.name}] 지난 기간 조회는 새로고침 후에도 서버 호출 없음 (${bidCalls}회)`);
+    }
     {
       // 물품 · 나라장터 쇼핑몰
       ok((await page.locator('#nav a').nth(5).textContent()).includes('물품 · 나라장터 쇼핑몰') && (await page.locator('#nav a').nth(6).textContent()).includes('내 보관함'), `[${vp.name}] 새 메뉴가 내 보관함 위에`);

@@ -92,6 +92,12 @@
   }
 
   // ---------- API ----------
+  // 화면을 보고 있을 때만 실행 (다른 탭 · 화면 꺼짐이면 다시 볼 때 실행) → 안 보는 동안 갱신 호출 없음
+  function whenVisible(fn) {
+    if (!document.hidden) { fn(); return; }
+    const h = () => { if (!document.hidden) { document.removeEventListener('visibilitychange', h); fn(); } };
+    document.addEventListener('visibilitychange', h);
+  }
   // 같은 조회는 브라우저에서도 잠시 기억해 다시 호출하지 않음 (동시에 같은 조회가 나가면 하나로 합침)
   const memo = new Map();
   const MEMO_MS = { ind: 6 * 3600e3, law: 30 * 60e3, default: 10 * 60e3 };
@@ -103,13 +109,62 @@
     if (memo.size > 400) memo.delete(memo.keys().next().value);
     return p;
   }
+  // 오래 바뀌지 않는 결과(서버가 '하루 이상 새 결과'로 본 것: 지난 기간 · 업체정보 등)는 브라우저 IndexedDB에도 보관
+  // → 같은 조회를 다시 하면 서버에도 묻지 않음. 저장 공간이 없거나 막힌 브라우저에서는 그냥 건너뜀
+  const LOCAL_MIN_FRESH = 86400;
+  const idb = (() => {
+    let dbp = null;
+    const open = () => dbp || (dbp = new Promise((res) => {
+      try {
+        const r = indexedDB.open('cne-cache', 1);
+        r.onupgradeneeded = () => r.result.createObjectStore('r');
+        r.onsuccess = () => res(r.result);
+        r.onerror = () => res(null);
+        r.onblocked = () => res(null);
+      } catch (e) { res(null); }
+    }));
+    const run = async (mode, fn) => {
+      const db = await open();
+      if (!db) return null;
+      return new Promise((res) => {
+        try {
+          const t = db.transaction('r', mode);
+          const req = fn(t.objectStore('r'));
+          t.oncomplete = () => res(req && 'result' in req ? req.result : null);
+          t.onerror = () => res(null);
+          t.onabort = () => res(null);
+        } catch (e) { res(null); }
+      });
+    };
+    return {
+      get: (k) => run('readonly', (st) => st.get(k)),
+      set: (k, v) => run('readwrite', (st) => st.put(v, k)),
+      // 기한 지난 것 지우고, 500개 넘으면 오래된 것부터 정리
+      prune: async () => {
+        const db = await open();
+        if (!db) return;
+        try {
+          const t = db.transaction('r', 'readwrite'), st = t.objectStore('r'), keep = [];
+          st.openCursor().onsuccess = (e) => {
+            const c = e.target.result;
+            if (!c) { keep.sort((a, b) => a.t - b.t).slice(0, Math.max(0, keep.length - 500)).forEach((x) => st.delete(x.k)); return; }
+            const v = c.value || {};
+            if (!v.exp || v.exp < Date.now()) c.delete(); else keep.push({ k: c.key, t: v.t || 0 });
+            c.continue();
+          };
+        } catch (e) { /* 무시 */ }
+      },
+    };
+  })();
+  setTimeout(() => idb.prune(), 3000);
+
   async function getJson(url) {
     let r;
     try { r = await fetch(url); } catch (e) { throw new Error('네트워크 연결을 확인하세요.'); }
     let j;
     try { j = await r.json(); } catch (e) { throw new Error('서버 응답을 읽지 못했습니다. (' + r.status + ')'); }
     // 서버가 보관해 둔 '오래된' 결과를 먼저 준 경우 표시 (뒤에서 새로 받는 중)
-    if (j && typeof j === 'object') j._stale = r.headers.get('x-cache') === 'stale';
+    if (j && typeof j === 'object') { j._stale = r.headers.get('x-cache') === 'stale'; j._fresh = Number(r.headers.get('x-fresh')) || 0; }
     return j;
   }
   // 공사 계약은 이름·날짜 필드명이 달라서(cnstwkNm, cbgnDate, ttalCcmpltDate…) 다른 업무와 같은 이름으로 맞춤
@@ -121,11 +176,16 @@
     if (!x.thtmScmpltDate && x.thtmCcmpltDate) x.thtmScmpltDate = x.thtmCcmpltDate;
     return x;
   }
-  function g2b(svc, op, params) {
+  function g2b(svc, op, params, opts) {
     const qs = new URLSearchParams(Object.assign({ svc, op }, clean(params || {}))).toString();
     const key = 'g2b?' + qs;
     const ttl = MEMO_MS[svc] || MEMO_MS.default;
-    return remember(key, ttl, async () => {
+    const local = !(opts && opts.noLocal);
+    return remember(key + (local ? '' : '#t'), ttl, async () => {
+      if (local) {
+        const saved = await idb.get(key);
+        if (saved && saved.exp > Date.now() && saved.v) return saved.v;
+      }
       const j = await getJson('/api/g2b?' + qs);
       if (!j.ok) {
         if (j.code === '03') return { ok: true, items: [], totalCount: 0 };
@@ -134,6 +194,7 @@
         throw err;
       }
       if (svc === 'cntrct' && Array.isArray(j.items)) j.items.forEach(normalizeCntrct);
+      if (local && !j._stale && j._fresh >= LOCAL_MIN_FRESH) idb.set(key, { t: Date.now(), exp: Date.now() + j._fresh * 1000, v: j });
       // 오래된 결과였다면 브라우저에는 20초만 기억 → 다음 조회 때 서버가 새로 받아 둔 결과를 가져옴
       if (j._stale) setTimeout(() => { const h = memo.get(key); if (h) h.t = 0; }, 20000);
       return j;
@@ -506,7 +567,7 @@
       C.err = null;
       snap.set(key, { items: r.items.map(slim), total: r.totalCount, trunc: r.truncated });
       // 서버가 오래된 결과를 먼저 줬다면, 잠시 뒤 새 결과로 조용히 바꿔 줌
-      if (r.stale && !silent) setTimeout(() => { if (my === C.seq && current.id === 'contract') searchContracts({ silent: true }); }, 21000);
+      if (r.stale && !silent) setTimeout(() => whenVisible(() => { if (my === C.seq && current.id === 'contract') searchContracts({ silent: true }); }), 21000);
     } catch (e) {
       if (my !== C.seq) return;
       if (C.data && C.snapAt) { C.snapErr = e.message; } else { C.data = null; C.err = e.message; }
@@ -675,7 +736,7 @@
     C.recentErr = errs.length && !items.length ? errs[0] : null;
     if (!C.recentErr) snap.set(key, { items: C.recent.map(slim) });
     drawRecent();
-    if (stale && !silent) setTimeout(() => { if (my === C.rseq && current.id === 'contract') loadRecent({ silent: true }); }, 21000);
+    if (stale && !silent) setTimeout(() => whenVisible(() => { if (my === C.rseq && current.id === 'contract') loadRecent({ silent: true }); }), 21000);
   }
   function drawRecent() {
     const box = $('#crecent');
@@ -1339,6 +1400,8 @@
     const instKey = settings.insttDivCd === '2' ? 'dminsttNm' : 'ntceInsttNm';
     const key = [settings.insttNm, instKey, settings.bizs.join(','), N.from, N.to].join('|');
     if (N.winKey === key && N.win) { fillNoticeWinners(); return; }
+    // 개찰이 지난 공고가 하나도 없으면 낙찰 결과를 조회하지 않음
+    if (!(N.items || []).some(openedPast)) { N.winKey = key; N.win = new Map(); N.winFail = false; fillNoticeWinners(); return; }
     N.winKey = key; N.win = null; fillNoticeWinners();
     const res = await Promise.allSettled(settings.bizs.map((b) => g2bByRange('scsbid', `getScsbidListSttus${BIZ[b]}PPSSrch`, { inqryDiv: 1, [instKey]: settings.insttNm }, N.from, N.to, { max: 2000 })));
     if (N.winKey !== key) return;
@@ -2168,6 +2231,17 @@
           <div class="btns" style="margin-top:12px"><button type="button" class="btn" id="htest">실제 조회로 연결 테스트</button></div>
           <div id="htestres" style="margin-top:10px"></div>
           <p class="small muted" style="margin:12px 0 0">인증키는 이 화면이나 브라우저에 저장되지 않고, Cloudflare 환경변수에만 있습니다.</p>
+        </section>
+        <section class="card">
+          <h2>API 호출 통계 <span class="badge">관리자 전용</span></h2>
+          <form class="form" id="stform" autocomplete="off">
+            <label class="grow">관리자 토큰<input type="password" name="tok" value="${esc(store.get('cne.admintok', ''))}" placeholder="Cloudflare에 넣은 ADMIN_TOKEN 값" autocomplete="off"></label>
+            <label>기간<select name="days"><option value="1">오늘</option><option value="7" selected>최근 7일</option><option value="31">최근 31일</option></select></label>
+            <label class="chk"><input type="checkbox" name="keep" ${store.get('cne.admintok', '') ? 'checked' : ''}>이 브라우저에 기억</label>
+            <button class="btn primary" type="submit">통계 보기</button>
+          </form>
+          <div id="stres" style="margin-top:12px"></div>
+          <p class="small muted" style="margin:10px 0 0">'나라장터 호출'은 서버가 공공데이터포털 · 법제처에 실제로 요청한 횟수, '저장본 응답'은 보관해 둔 결과로 바로 답한 횟수입니다. 같은 지역 데이터센터 기준 대략값이며, 브라우저 안에서 바로 처리된 조회는 세지 않습니다.</p>
         </section>` : ''}
       </div>`;
     const resetData = () => { C.data = null; C.recent = null; N.items = null; };
@@ -2186,23 +2260,65 @@
       const row = (name, src, ok) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;background:var(--soft);border-radius:8px;margin-bottom:8px"><div><div>${name}</div><div class="small muted">${src}</div></div><span class="badge ${ok ? 'grn' : 'red'}">${ok ? '키 설정됨' : '키 없음'}</span></div>`;
       $('#health').innerHTML = row('나라장터 입찰공고 · 계약 · 사용자정보 · 업종', '공공데이터포털 인증키 (G2B_SERVICE_KEY)', h.g2b) + row('조달청 법령해석 목록 · 본문', '법제처 OC (LAW_OC)', h.law);
     }).catch(() => { $('#health').innerHTML = errBox('상태를 확인하지 못했습니다.'); });
+    $('#stform').addEventListener('submit', (e) => { e.preventDefault(); loadStats(e.target); });
     $('#htest').addEventListener('click', async () => {
       const out = $('#htestres');
       out.innerHTML = loading('각 API를 1건씩 조회하는 중…');
       const d = ymd(iso(addDays(today(), -1)));
       const tests = [
-        ['입찰공고정보서비스', () => g2b('bid', 'getBidPblancListInfoServcPPSSrch', { inqryDiv: 1, inqryBgnDt: d + '0000', inqryEndDt: d + '2359', numOfRows: 1 })],
-        ['계약정보서비스', () => g2b('cntrct', 'getCntrctInfoListServcPPSSrch', { inqryDiv: 1, inqryBgnDate: d, inqryEndDate: d, numOfRows: 1 })],
-        ['사용자정보서비스', () => g2b('usr', 'getDminsttInfo02', { inqryDiv: 1, inqryBgnDt: d + '0000', inqryEndDt: d + '2359', numOfRows: 1 })],
-        ['업종 및 근거법규서비스', () => g2b('ind', 'getIndstrytyBaseLawrgltInfoList', { numOfRows: 1 })],
-        ['사전규격정보서비스', () => g2b('pre', 'getPublicPrcureThngInfoServcPPSSrch', { inqryDiv: 1, inqryBgnDt: d + '0000', inqryEndDt: d + '2359', numOfRows: 1 })],
-        ['계약과정통합공개서비스', () => g2b('intg', 'getCntrctProcssIntgOpenServc', { inqryDiv: 1, bidNtceNo: 'R25BK00947937', numOfRows: 1 })],
-        ['낙찰정보서비스', () => g2b('scsbid', 'getScsbidListSttusServc', { inqryDiv: 2, inqryBgnDt: d + '0000', inqryEndDt: d + '2359', numOfRows: 1 })],
+        ['입찰공고정보서비스', () => g2b('bid', 'getBidPblancListInfoServcPPSSrch', { inqryDiv: 1, inqryBgnDt: d + '0000', inqryEndDt: d + '2359', numOfRows: 1 }, { noLocal: true })],
+        ['계약정보서비스', () => g2b('cntrct', 'getCntrctInfoListServcPPSSrch', { inqryDiv: 1, inqryBgnDate: d, inqryEndDate: d, numOfRows: 1 }, { noLocal: true })],
+        ['사용자정보서비스', () => g2b('usr', 'getDminsttInfo02', { inqryDiv: 1, inqryBgnDt: d + '0000', inqryEndDt: d + '2359', numOfRows: 1 }, { noLocal: true })],
+        ['업종 및 근거법규서비스', () => g2b('ind', 'getIndstrytyBaseLawrgltInfoList', { numOfRows: 1 }, { noLocal: true })],
+        ['사전규격정보서비스', () => g2b('pre', 'getPublicPrcureThngInfoServcPPSSrch', { inqryDiv: 1, inqryBgnDt: d + '0000', inqryEndDt: d + '2359', numOfRows: 1 }, { noLocal: true })],
+        ['계약과정통합공개서비스', () => g2b('intg', 'getCntrctProcssIntgOpenServc', { inqryDiv: 1, bidNtceNo: 'R25BK00947937', numOfRows: 1 }, { noLocal: true })],
+        ['낙찰정보서비스', () => g2b('scsbid', 'getScsbidListSttusServc', { inqryDiv: 2, inqryBgnDt: d + '0000', inqryEndDt: d + '2359', numOfRows: 1 }, { noLocal: true })],
         ['법제처 법령해석', () => lawApi('list', { query: '계약', display: 1 })],
       ];
       const res = await Promise.allSettled(tests.map((t) => t[1]()));
       out.innerHTML = res.map((r, i) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:8px 0;border-bottom:1px solid var(--line-2)"><span>${tests[i][0]}</span>${r.status === 'fulfilled' ? '<span class="badge grn">정상</span>' : `<span class="badge red" title="${esc(r.reason.message)}">실패</span>`}</div>${r.status === 'rejected' ? `<div class="small" style="color:var(--red);padding:4px 0 8px">${esc(r.reason.message)}</div>` : ''}`).join('');
     });
+  }
+
+  const API_NAMES = { bid: '입찰공고', cntrct: '계약', usr: '사용자정보', ind: '업종 · 근거법규', pre: '사전규격', intg: '계약과정통합', scsbid: '낙찰정보', shop: '나라장터 쇼핑몰', thng: '물품목록', law: '법제처 법령해석' };
+  async function loadStats(f) {
+    const out = $('#stres');
+    const tok = f.tok.value.trim();
+    if (!tok) { out.innerHTML = errBox('관리자 토큰을 입력하세요.'); return; }
+    if (f.keep.checked) store.set('cne.admintok', tok); else store.set('cne.admintok', '');
+    out.innerHTML = loading('통계를 불러오는 중…');
+    let j;
+    try { j = await fetch('/api/stats?days=' + f.days.value, { headers: { 'x-admin-token': tok }, cache: 'no-store' }).then((r) => r.json()); } catch (e) { out.innerHTML = errBox('통계를 불러오지 못했습니다.'); return; }
+    if (!j.ok) { out.innerHTML = errBox(j.msg || '열 수 없습니다.'); return; }
+    // 서비스별 합계 + 날짜별 합계
+    const bySvc = {}, byOp = {};
+    let up = 0, hit = 0;
+    const daily = j.days.map((d) => {
+      let u = 0, h = 0;
+      Object.entries(d.rows).forEach(([k, v]) => {
+        const [svc, op] = k.split('|');
+        const a = (bySvc[svc] = bySvc[svc] || { up: 0, hit: 0 }); a.up += v.up || 0; a.hit += v.hit || 0;
+        const b = (byOp[k] = byOp[k] || { svc, op, up: 0, hit: 0 }); b.up += v.up || 0; b.hit += v.hit || 0;
+        u += v.up || 0; h += v.hit || 0;
+      });
+      up += u; hit += h;
+      return { date: d.date, u, h };
+    });
+    const pctSaved = up + hit ? Math.round((hit / (up + hit)) * 100) : 0;
+    const svcRows = Object.entries(bySvc).sort((a, b) => b[1].up - a[1].up);
+    const opRows = Object.values(byOp).sort((a, b) => b.up - a.up).slice(0, 15);
+    out.innerHTML = `
+      <div class="stats">
+        <div class="card stat"><div class="small muted">나라장터 · 법제처 실제 호출</div><strong>${up.toLocaleString()}회</strong></div>
+        <div class="card stat"><div class="small muted">저장본으로 바로 응답</div><strong>${hit.toLocaleString()}회</strong></div>
+        <div class="card stat"><div class="small muted">호출 절약 비율</div><strong>${pctSaved}%</strong></div>
+        <div class="card stat"><div class="small muted">하루 평균 실제 호출</div><strong>${Math.round(up / daily.length).toLocaleString()}회</strong></div>
+      </div>
+      <h3 style="margin:16px 0 8px">날짜별</h3>
+      <div class="tablewrap"><table><thead><tr><th>날짜</th><th class="num">실제 호출</th><th class="num">저장본 응답</th></tr></thead><tbody>${daily.map((d) => `<tr><td>${esc(d.date)}</td><td class="num">${d.u.toLocaleString()}</td><td class="num">${d.h.toLocaleString()}</td></tr>`).join('')}</tbody></table></div>
+      <h3 style="margin:16px 0 8px">API별</h3>
+      ${svcRows.length ? `<div class="tablewrap"><table><thead><tr><th>API</th><th class="num">실제 호출</th><th class="num">저장본 응답</th></tr></thead><tbody>${svcRows.map(([k, v]) => `<tr><td>${esc(API_NAMES[k] || k)}</td><td class="num">${v.up.toLocaleString()}</td><td class="num">${v.hit.toLocaleString()}</td></tr>`).join('')}</tbody></table></div>` : empty('기록이 없습니다.')}
+      ${opRows.length ? `<details style="margin-top:10px"><summary class="small">오퍼레이션별 상위 15개</summary><div class="tablewrap"><table><thead><tr><th>API · 오퍼레이션</th><th class="num">실제 호출</th><th class="num">저장본 응답</th></tr></thead><tbody>${opRows.map((v) => `<tr><td>${esc(API_NAMES[v.svc] || v.svc)}<div class="small muted">${esc(v.op)}</div></td><td class="num">${v.up.toLocaleString()}</td><td class="num">${v.hit.toLocaleString()}</td></tr>`).join('')}</tbody></table></div></details>` : ''}`;
   }
 
   // =====================================================================

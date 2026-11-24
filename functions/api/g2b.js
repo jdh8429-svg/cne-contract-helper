@@ -47,8 +47,32 @@ const OPS = {
   scsbid: B4.flatMap((b) => [`getScsbidListSttus${b}`, `getScsbidListSttus${b}PPSSrch`, `getOpengResultListInfo${b}`, `getOpengResultListInfo${b}PreparPcDetail`]).concat(['getOpengResultListInfoOpengCompt']),
 };
 
-// 업종 목록처럼 자주 바뀌지 않는 데이터는 더 오래 캐시
-const CACHE_SECONDS = { ind: 21600 };
+import { count, flush } from '../_lib/stats.js';
+
+// 날짜가 없는 조회: 잘 바뀌지 않는 데이터는 더 오래 캐시 (초)
+//  업종 6시간 · 업체 기본정보 3일 · 물품분류 1일 · 공고번호로 찾는 낙찰/계약과정 1시간 · 납품요구 상세 1일
+const CACHE_SECONDS = { ind: 21600, usr: 259200, thng: 86400, scsbid: 3600, intg: 3600, pre: 3600 };
+const OP_SECONDS = { getDlvrReqDtlInfoList: 86400 };
+const DAY = 86400;
+
+// 한국시간 오늘 (YYYYMMDD)
+const kstToday = () => new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10).replace(/-/g, '');
+const ymdDays = (a, b) => (Date.UTC(+a.slice(0, 4), +a.slice(4, 6) - 1, +a.slice(6, 8)) - Date.UTC(+b.slice(0, 4), +b.slice(4, 6) - 1, +b.slice(6, 8))) / 864e5;
+
+// 얼마 동안 '새 결과'로 볼지 (초)
+// - 오늘이 들어간 기간: 10분
+// - 지난 기간은 거의 바뀌지 않으므로 오래 보관: 1주 이내 1일, 그 이전 7일
+// - 단, 공고일 기준 낙찰 결과는 개찰 뒤에 채워지므로 60일 이내는 6시간
+export function freshSeconds(svc, op, sp) {
+  const end = String(sp.get('inqryEndDate') || sp.get('inqryEndDt') || '').replace(/\D/g, '').slice(0, 8);
+  if (end.length === 8) {
+    const age = ymdDays(kstToday(), end);
+    if (age <= 0) return 600;
+    if (svc === 'scsbid' && sp.get('inqryDiv') === '1') return age <= 60 ? 6 * 3600 : 7 * DAY;
+    return age <= 7 ? DAY : 7 * DAY;
+  }
+  return OP_SECONDS[op] || CACHE_SECONDS[svc] || 600;
+}
 
 const CODE_HINTS = {
   '03': '조회 결과가 없습니다.',
@@ -155,8 +179,8 @@ export async function onRequestGet(context) {
   // 캐시 규칙이 바뀌면 v 값을 올려 이전 캐시를 쓰지 않게 함
   const ck = new URL(url.toString()); ck.searchParams.set('_cv', '2');
   const cacheKey = new Request(ck.toString(), { method: 'GET' });
-  const fresh = CACHE_SECONDS[svc] || 600;
-  const KEEP = 86400;
+  const fresh = freshSeconds(svc, op, url.searchParams);
+  const KEEP = Math.min(Math.max(DAY, fresh * 4), 30 * DAY);
 
   const get = async (u) => {
     const ctrl = new AbortController();
@@ -169,6 +193,7 @@ export async function onRequestGet(context) {
   // 나라장터에서 새로 받아 정리하고, 정상이면 캐시에 저장
   const refresh = async () => {
     let resp;
+    count(svc, op, 'up');
     try {
       resp = await get(target);
       // https에서 HTML 오류 페이지가 오면 문서에 적힌 http 주소로 한 번 더 시도
@@ -182,7 +207,7 @@ export async function onRequestGet(context) {
     const result = normalize(resp.text);
     if (!result.ok && result.code === 'HTML') result.msg += ` (HTTP ${resp.status})`;
     if (result.ok && cache) {
-      const stored = json(result, 200, { 'cache-control': `public, max-age=${KEEP}`, 'x-fetched-at': String(Date.now()) });
+      const stored = json(result, 200, { 'cache-control': `public, max-age=${KEEP}`, 'x-fetched-at': String(Date.now()), 'x-fresh': String(fresh) });
       await cache.put(cacheKey, stored);
     }
     return result;
@@ -202,16 +227,19 @@ export async function onRequestGet(context) {
     if (hit) {
       const age = (Date.now() - Number(hit.headers.get('x-fetched-at') || 0)) / 1000;
       const body = await hit.text();
+      count(svc, op, 'hit');
       if (age < fresh) {
-        return new Response(body, { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'private, max-age=60', 'x-cache': 'fresh' } });
+        flush(context);
+        return new Response(body, { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'private, max-age=60', 'x-cache': 'fresh', 'x-fresh': String(Math.round(fresh - age)) } });
       }
       // 오래된 결과: 바로 돌려주고 뒤에서 새로 받아 둠 → 화면은 기다리지 않음
-      context.waitUntil?.(refresh().catch(() => {}));
+      context.waitUntil?.(refresh().catch(() => {}).then(() => flush(context)));
       return new Response(body, { headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store', 'x-cache': 'stale', 'x-age': String(Math.round(age)) } });
     }
   }
 
   const result = await refresh();
-  if (result.ok) return json(result, 200, { 'cache-control': 'private, max-age=60', 'x-cache': 'miss' });
+  flush(context);
+  if (result.ok) return json(result, 200, { 'cache-control': 'private, max-age=60', 'x-cache': 'miss', 'x-fresh': String(fresh) });
   return json(result, result.code === 'NETWORK' ? 502 : 200);
 }

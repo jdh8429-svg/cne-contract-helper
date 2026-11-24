@@ -4,6 +4,8 @@
 // - mode=detail : 본문 조회 (lawService.do, JSON)
 // - mode=html   : 본문 원문 화면 (lawService.do, HTML)
 
+import { count, flush } from '../_lib/stats.js';
+
 const LIST_PARAMS = ['query', 'search', 'display', 'page', 'inq', 'rpl', 'gana', 'itmno', 'explYd', 'sort'];
 const DETAIL_PARAMS = ['ID', 'LM'];
 
@@ -38,8 +40,10 @@ export async function onRequestGet(context) {
   const cacheKey = new Request(url.toString(), { method: 'GET' });
   if (cache) {
     const hit = await cache.match(cacheKey);
-    if (hit) return hit;
+    if (hit) { count('law', mode, 'hit'); flush(context); return hit; }
   }
+  count('law', mode, 'up');
+  flush(context);
 
   const get = async (u, ms) => {
     const ctrl = new AbortController();

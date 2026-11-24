@@ -186,7 +186,12 @@
         const saved = await idb.get(key);
         if (saved && saved.exp > Date.now() && saved.v) return saved.v;
       }
-      const j = await getJson('/api/g2b?' + qs);
+      let j = await getJson('/api/g2b?' + qs).catch((e) => ({ ok: false, code: 'NETWORK', msg: e.message }));
+      // 일시적인 연결 지연(522 등)이면 3초 뒤 한 번 더 자동으로 시도
+      if (!j.ok && (j.code === 'UPSTREAM' || j.code === 'NETWORK')) {
+        await new Promise((r) => setTimeout(r, 3000));
+        j = await getJson('/api/g2b?' + qs).catch((e) => ({ ok: false, code: 'NETWORK', msg: e.message }));
+      }
       if (!j.ok) {
         if (j.code === '03') return { ok: true, items: [], totalCount: 0 };
         const err = new Error(j.msg || '조회 중 오류가 발생했습니다.');

@@ -23,6 +23,9 @@ const calls = [];
 function fixture(urlStr) {
   const u = new URL(urlStr);
   calls.push(u);
+  // 연결 지연(522) 흉내: '지연1'은 처음 한 번만, '지연항상'은 계속
+  const nm = u.searchParams.get('bidNtceNm') || '';
+  if (nm === '지연항상' || (nm === '지연1' && !globalThis.__delayed1)) { globalThis.__delayed1 = true; return 'error code: 522'; }
   if (u.hostname === 'www.law.go.kr') {
     if (u.pathname.endsWith('lawSearch.do')) return JSON.stringify({ PpsCgmExpcSearch: { totalCnt: '2', page: '1', ppsCgmExpc: [
       { id: '1', 법령해석일련번호: '431416', 안건명: '협상에 의한 계약 평가 관련 질의', 안건번호: '조달청-25-0001', 해석일자: '20250930', 해석기관명: '조달청', 질의기관명: '충청남도교육청', 법령해석상세링크: `/DRF/lawService.do?OC=${OC}&target=ppsCgmExpc&ID=431416` },
@@ -175,6 +178,13 @@ console.log('서버 함수');
 }
 
 {
+  // 나라장터 연결 지연(522)
+  const r1 = JSON.parse((await call(g2b, 'http://x/api/g2b?svc=bid&op=getBidPblancListInfoServcPPSSrch&inqryDiv=1&bidNtceNm=지연1')).text);
+  ok(r1.ok, '522가 한 번 나면 서버가 다시 시도해 정상 응답');
+  const r2 = JSON.parse((await call(g2b, 'http://x/api/g2b?svc=bid&op=getBidPblancListInfoServcPPSSrch&inqryDiv=1&bidNtceNm=지연항상')).text);
+  ok(!r2.ok && r2.code === 'UPSTREAM' && r2.msg.includes('지연'), `계속 522면 알기 쉬운 안내 (${r2.msg})`);
+}
+{
   // 지난 기간은 오래 보관 (호출 최소화)
   const kst = (d) => new Date(Date.now() + 9 * 3600e3 - d * 864e5).toISOString().slice(0, 10).replace(/-/g, '');
   const F = (svc, q) => g2b.freshSeconds(svc, 'x', new URLSearchParams(q));
@@ -199,7 +209,7 @@ console.log('서버 함수');
   const good = await stats.onRequestGet(ctx('http://x/api/stats?days=1', { 'x-admin-token': 'admin-secret-1' }));
   const j = JSON.parse(await good.text());
   const row = j.days[0].rows['bid|getBidPblancListInfoServcPPSSrch'] || {};
-  ok(j.ok && row.up === 1 && row.hit === 2, `통계: 실제 호출 1회 · 저장본 응답 2회 (${JSON.stringify(row)})`);
+  ok(j.ok && row.up >= 1 && row.hit === 2, `통계: 실제 호출 · 저장본 응답 2회 집계 (${JSON.stringify(row)})`);
   const none = await stats.onRequestGet({ request: new Request('http://x/api/stats', { headers: { 'x-admin-token': 'a' } }), env: {} });
   ok(JSON.parse(await none.text()).code === 'NOTOKEN', '통계: 토큰이 설정되지 않으면 열리지 않음');
   delete globalThis.caches;

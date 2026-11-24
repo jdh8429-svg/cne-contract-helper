@@ -109,6 +109,9 @@ export function normalize(text) {
   try {
     data = JSON.parse(text);
   } catch {
+    // Cloudflare가 나라장터 서버에 연결하지 못했을 때 붙이는 응답 (예: 'error code: 522')
+    const cf = String(text || '').trim().match(/^error code:\s*(\d{3,4})/i);
+    if (cf) return { ok: false, code: 'UPSTREAM', msg: `나라장터 API 서버 연결이 잠시 지연되고 있습니다(${cf[1]}). 잠시 후 다시 시도하세요.`, raw: cf[0] };
     if (/<html/i.test(text)) {
       const title = (text.match(/<title[^>]*>([^<]*)<\/title>/i) || [])[1] || '';
       const body = text.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, ' ').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -195,12 +198,19 @@ export async function onRequestGet(context) {
     let resp;
     count(svc, op, 'up');
     try {
-      resp = await get(target);
-      // https에서 HTML 오류 페이지가 오면 문서에 적힌 http 주소로 한 번 더 시도
-      if (/<html/i.test(resp.text)) {
+      // 연결 지연(522 등) · 5xx · HTML 오류 페이지면: http 주소로 한 번, 잠시 뒤 https로 한 번 더 시도
+      const bad = (r) => !r || r.status >= 500 || /^\s*error code:\s*5\d\d/i.test(r.text) || /<html/i.test(r.text);
+      resp = await get(target).catch(() => null);
+      if (bad(resp)) {
         const alt = await get(target.replace(/^https:/, 'http:')).catch(() => null);
-        if (alt && !/<html/i.test(alt.text)) resp = alt;
+        if (!bad(alt)) resp = alt;
       }
+      if (bad(resp)) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const again = await get(target).catch(() => null);
+        if (!bad(again) || !resp) resp = again || resp;
+      }
+      if (!resp) throw new Error('no response');
     } catch (e) {
       return { ok: false, code: 'NETWORK', msg: '나라장터 API 서버가 응답하지 않습니다. 잠시 후 다시 시도하세요.' };
     }

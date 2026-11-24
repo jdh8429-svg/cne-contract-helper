@@ -185,9 +185,9 @@ export async function onRequestGet(context) {
   const fresh = freshSeconds(svc, op, url.searchParams);
   const KEEP = Math.min(Math.max(DAY, fresh * 4), 30 * DAY);
 
-  const get = async (u) => {
+  const get = async (u, ms = 45000) => {
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), 45000);
+    const timer = setTimeout(() => ctrl.abort(), ms);
     try {
       const r = await fetch(u, { signal: ctrl.signal, headers: { accept: 'application/json, application/xml, */*', 'user-agent': 'Mozilla/5.0 (compatible; cne-contract-helper)' } });
       return { status: r.status, text: await r.text() };
@@ -200,15 +200,12 @@ export async function onRequestGet(context) {
     try {
       // 연결 지연(522 등) · 5xx · HTML 오류 페이지면: http 주소로 한 번, 잠시 뒤 https로 한 번 더 시도
       const bad = (r) => !r || r.status >= 500 || /^\s*error code:\s*5\d\d/i.test(r.text) || /<html/i.test(r.text);
+      // 단, 실패가 빨리(12초 안에) 왔을 때만 다시 시도 → 느린 실패를 여러 번 기다리느라 화면이 오래 멈추지 않게
+      const t0 = Date.now();
       resp = await get(target).catch(() => null);
-      if (bad(resp)) {
-        const alt = await get(target.replace(/^https:/, 'http:')).catch(() => null);
+      if (bad(resp) && Date.now() - t0 < 12000) {
+        const alt = await get(target.replace(/^https:/, 'http:'), 20000).catch(() => null);
         if (!bad(alt)) resp = alt;
-      }
-      if (bad(resp)) {
-        await new Promise((r) => setTimeout(r, 1500));
-        const again = await get(target).catch(() => null);
-        if (!bad(again) || !resp) resp = again || resp;
       }
       if (!resp) throw new Error('no response');
     } catch (e) {

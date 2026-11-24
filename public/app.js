@@ -123,7 +123,10 @@
         r.onblocked = () => res(null);
       } catch (e) { res(null); }
     }));
-    const run = async (mode, fn) => {
+    // 일부 앱 내장 브라우저에서 저장소가 응답하지 않을 수 있어 1.5초 넘으면 그냥 건너뜀 (조회가 멈추지 않게)
+    const limit = (p) => Promise.race([p, new Promise((res) => setTimeout(() => res(null), 1500))]);
+    const run = async (mode, fn) => limit(runRaw(mode, fn));
+    const runRaw = async (mode, fn) => {
       const db = await open();
       if (!db) return null;
       return new Promise((res) => {
@@ -186,9 +189,10 @@
         const saved = await idb.get(key);
         if (saved && saved.exp > Date.now() && saved.v) return saved.v;
       }
+      const t0 = Date.now();
       let j = await getJson('/api/g2b?' + qs).catch((e) => ({ ok: false, code: 'NETWORK', msg: e.message }));
-      // 일시적인 연결 지연(522 등)이면 3초 뒤 한 번 더 자동으로 시도
-      if (!j.ok && (j.code === 'UPSTREAM' || j.code === 'NETWORK')) {
+      // 일시적인 연결 지연(522 등)이 빨리(15초 안에) 왔을 때만 3초 뒤 한 번 더 자동으로 시도
+      if (!j.ok && (j.code === 'UPSTREAM' || j.code === 'NETWORK') && Date.now() - t0 < 15000) {
         await new Promise((r) => setTimeout(r, 3000));
         j = await getJson('/api/g2b?' + qs).catch((e) => ({ ok: false, code: 'NETWORK', msg: e.message }));
       }

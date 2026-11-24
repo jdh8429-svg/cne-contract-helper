@@ -325,11 +325,23 @@
     return q ? h + '?' + q : h;
   }
   function parseHash() {
-    const raw = location.hash.replace(/^#/, '');
+    // 휴대폰 주소창에서 기존 주소 뒤에 '#settings/check'를 덧붙이면 '#contract#settings/check'처럼 됨 → 마지막 # 뒤만 사용
+    // 휴대폰 키보드가 붙이는 공백 · 대문자도 정리
+    let raw = location.hash.replace(/^#/, '');
+    if (raw.includes('#')) raw = raw.slice(raw.lastIndexOf('#') + 1);
+    raw = raw.replace(/^(%20|\s)+/, '');
+    // 짧은 주소: #check · #admin → 관리자 점검 화면
+    if (/^(check|admin)\s*$/i.test(raw)) raw = 'settings/check';
     const qi = raw.indexOf('?');
     const path = qi >= 0 ? raw.slice(0, qi) : raw;
     const query = qi >= 0 ? raw.slice(qi + 1) : '';
-    const [id, ...rest] = path.split('/');
+    const parts = path.split('/');
+    // 메뉴 이름 부분은 대소문자 · 공백 무시 (예: '#Settings/Check ')
+    let id = parts[0];
+    try { id = decodeURIComponent(id); } catch (e) { /* 그대로 */ }
+    id = id.trim().toLowerCase();
+    const rest = parts.slice(1);
+    if (id === 'settings' && rest.length && /^check\s*$/i.test(decodeURIComponent(rest[0] || ''))) rest[0] = 'check';
     let arg = '';
     try { arg = decodeURIComponent(rest.join('/')); } catch (e) { arg = rest.join('/'); }
     const params = {};

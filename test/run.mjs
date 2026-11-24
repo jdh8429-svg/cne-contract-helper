@@ -420,6 +420,14 @@ if (chromium) {
     ok(await page.locator('#htestres .badge.grn').count() === 8, `[${vp.name}] 연결 테스트 8개 정상`);
     await shot('7-settings');
     {
+      // 휴대폰처럼 기존 주소 뒤에 덧붙여 입력해도 관리자 화면이 열림
+      await page.goto(base + '/#contract#settings/check');
+      await page.reload();
+      await page.waitForSelector('#stform');
+      ok(true, `[${vp.name}] '#contract#settings/check'처럼 덧붙여 입력해도 관리자 화면`);
+      await page.goto(base + '/#check');
+      await page.waitForSelector('#stform');
+      ok(true, `[${vp.name}] 짧은 주소 #check`);
       // 관리자 전용 호출 통계 화면
       await page.goto(base + '/#settings/check');
       await page.reload();

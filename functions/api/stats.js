@@ -14,7 +14,7 @@ function same(a, b) {
 
 export async function onRequestGet({ request, env }) {
   const admin = (env.ADMIN_TOKEN || '').trim();
-  if (!admin) return json({ ok: false, code: 'NOTOKEN', msg: '관리자 토큰(ADMIN_TOKEN)이 아직 설정되지 않았습니다. Cloudflare Pages → 설정 → 환경변수에 ADMIN_TOKEN을 추가한 뒤 다시 배포하세요.' }, 403);
+  if (!admin) return json({ ok: false, code: 'NOTOKEN', msg: '관리자 토큰(ADMIN_TOKEN)이 아직 설정되지 않았습니다. Cloudflare Pages → 설정 → 환경변수에 ADMIN_TOKEN을 추가한 뒤 다시 배포하세요.' });
   const given = (request.headers.get('x-admin-token') || '').trim();
   if (!same(given, admin)) {
     await new Promise((r) => setTimeout(r, 600)); // 반복 추측을 느리게

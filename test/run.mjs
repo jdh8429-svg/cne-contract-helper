@@ -9,6 +9,7 @@ import * as g2b from '../functions/api/g2b.js';
 import * as law from '../functions/api/law.js';
 import * as health from '../functions/api/health.js';
 import * as stats from '../functions/api/stats.js';
+import * as mw from '../functions/api/_middleware.js';
 
 globalThis.FAKE_LIMIT = 31;
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -177,6 +178,16 @@ console.log('서버 함수');
   delete globalThis.caches;
 }
 
+{
+  // GitHub 주소 화면에서의 조회 허용(CORS)
+  const gh = 'https://jdh8429-svg.github.io';
+  const pre = await mw.onRequest({ request: new Request('http://x/api/g2b', { method: 'OPTIONS', headers: { Origin: gh } }), next: async () => new Response('x') });
+  ok(pre.status === 204 && pre.headers.get('access-control-allow-origin') === gh, 'CORS: GitHub 주소 사전 확인 허용');
+  const r = await mw.onRequest({ request: new Request('http://x/api/g2b', { headers: { Origin: gh } }), next: async () => new Response('{}', { headers: { 'x-cache': 'fresh' } }) });
+  ok(r.headers.get('access-control-allow-origin') === gh && r.headers.get('access-control-expose-headers').includes('x-fresh'), 'CORS: GitHub 주소 응답 허용');
+  const evil = await mw.onRequest({ request: new Request('http://x/api/g2b', { headers: { Origin: 'https://evil.example' } }), next: async () => new Response('{}') });
+  ok(!evil.headers.get('access-control-allow-origin'), 'CORS: 다른 사이트는 허용 안 함');
+}
 {
   // 나라장터 연결 지연(522)
   const r1 = JSON.parse((await call(g2b, 'http://x/api/g2b?svc=bid&op=getBidPblancListInfoServcPPSSrch&inqryDiv=1&bidNtceNm=지연1')).text);

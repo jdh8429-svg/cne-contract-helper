@@ -92,6 +92,8 @@
   }
 
   // ---------- API ----------
+  // GitHub 주소(github.io)에서 열면 화면만 GitHub에 있고, 조회는 Cloudflare 서버(인증키 보관)로 보냄
+  const API = /\.github\.io$/.test(location.hostname) ? 'https://cnecontract.pages.dev' : '';
   // 화면을 보고 있을 때만 실행 (다른 탭 · 화면 꺼짐이면 다시 볼 때 실행) → 안 보는 동안 갱신 호출 없음
   function whenVisible(fn) {
     if (!document.hidden) { fn(); return; }
@@ -190,11 +192,11 @@
         if (saved && saved.exp > Date.now() && saved.v) return saved.v;
       }
       const t0 = Date.now();
-      let j = await getJson('/api/g2b?' + qs).catch((e) => ({ ok: false, code: 'NETWORK', msg: e.message }));
+      let j = await getJson(API + '/api/g2b?' + qs).catch((e) => ({ ok: false, code: 'NETWORK', msg: e.message }));
       // 일시적인 연결 지연(522 등)이 빨리(15초 안에) 왔을 때만 3초 뒤 한 번 더 자동으로 시도
       if (!j.ok && (j.code === 'UPSTREAM' || j.code === 'NETWORK') && Date.now() - t0 < 15000) {
         await new Promise((r) => setTimeout(r, 3000));
-        j = await getJson('/api/g2b?' + qs).catch((e) => ({ ok: false, code: 'NETWORK', msg: e.message }));
+        j = await getJson(API + '/api/g2b?' + qs).catch((e) => ({ ok: false, code: 'NETWORK', msg: e.message }));
       }
       if (!j.ok) {
         if (j.code === '03') return { ok: true, items: [], totalCount: 0 };
@@ -304,7 +306,7 @@
   function lawApi(mode, params) {
     const qs = new URLSearchParams(Object.assign({ mode }, clean(params || {}))).toString();
     return remember('law?' + qs, MEMO_MS.law, async () => {
-      const j = await getJson('/api/law?' + qs);
+      const j = await getJson(API + '/api/law?' + qs);
       if (!j.ok) throw new Error(j.msg || '조회 중 오류가 발생했습니다.');
       return j.data;
     });
@@ -1695,10 +1697,10 @@
       <h3>관련법령</h3>
       <div class="docs" style="margin:0 0 18px">${refs.length ? refs.map((r) => `<a class="doc" href="${esc(refLink(r))}" target="_blank" rel="noopener">${esc(r)} ↗</a>`).join('') : '<span class="small muted">-</span>'}</div>
       <div class="btns">
-        <a class="btn primary" href="/api/law?mode=html&ID=${encodeURIComponent(L.selId)}" target="_blank" rel="noopener">법제처 원문 보기 ↗</a>
+        <a class="btn primary" href="${API}/api/law?mode=html&ID=${encodeURIComponent(L.selId)}" target="_blank" rel="noopener">법제처 원문 보기 ↗</a>
         <button type="button" class="btn" id="lsave">보관함에 저장</button>
       </div>`;
-    $('#lsave').addEventListener('click', () => saveItem({ kind: '법령해석', key: L.selId, name: title, link: '/api/law?mode=html&ID=' + encodeURIComponent(L.selId) }));
+    $('#lsave').addEventListener('click', () => saveItem({ kind: '법령해석', key: L.selId, name: title, link: API + '/api/law?mode=html&ID=' + encodeURIComponent(L.selId) }));
   }
 
   // ----- 업종 · 근거법규 -----
@@ -2277,7 +2279,7 @@
     });
     $('#setreset').addEventListener('click', () => { settings = Object.assign({}, DEFAULTS, { bizs: DEFAULTS.bizs.slice() }); store.set('cne.settings', settings); resetData(); renderSettings(view, arg); toast('기본값으로 되돌렸습니다.'); });
     if (!admin) return;
-    fetch('/api/health').then((r) => r.json()).then((h) => {
+    fetch(API + '/api/health').then((r) => r.json()).then((h) => {
       const row = (name, src, ok) => `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 12px;background:var(--soft);border-radius:8px;margin-bottom:8px"><div><div>${name}</div><div class="small muted">${src}</div></div><span class="badge ${ok ? 'grn' : 'red'}">${ok ? '키 설정됨' : '키 없음'}</span></div>`;
       $('#health').innerHTML = row('나라장터 입찰공고 · 계약 · 사용자정보 · 업종', '공공데이터포털 인증키 (G2B_SERVICE_KEY)', h.g2b) + row('조달청 법령해석 목록 · 본문', '법제처 OC (LAW_OC)', h.law);
     }).catch(() => { $('#health').innerHTML = errBox('상태를 확인하지 못했습니다.'); });
@@ -2309,7 +2311,7 @@
     if (f.keep.checked) store.set('cne.admintok', tok); else store.set('cne.admintok', '');
     out.innerHTML = loading('통계를 불러오는 중…');
     let j;
-    try { j = await fetch('/api/stats?days=' + f.days.value, { headers: { 'x-admin-token': tok }, cache: 'no-store' }).then((r) => r.json()); } catch (e) { out.innerHTML = errBox('통계를 불러오지 못했습니다.'); return; }
+    try { j = await fetch(API + '/api/stats?days=' + f.days.value, { headers: { 'x-admin-token': tok }, cache: 'no-store' }).then((r) => r.json()); } catch (e) { out.innerHTML = errBox('통계를 불러오지 못했습니다.'); return; }
     if (!j.ok) { out.innerHTML = errBox(j.msg || '열 수 없습니다.'); return; }
     // 서비스별 합계 + 날짜별 합계
     const bySvc = {}, byOp = {};
